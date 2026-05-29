@@ -1,0 +1,147 @@
+"openai/gpt-oss-20b:free":
+  GPQA_Diamond:
+    description: "Graduate-level scientific reasoning"
+    score: 68.8
+
+  HLE:
+    description: "Expert-level questions across many fields"
+    score: 9.8
+
+  IFBench:
+    description: "Instruction-following benchmark"
+    score: 65.1
+
+  T2_Bench_Telecom:
+    description: "Conversational AI agents in dual-control scenarios"
+    score: 60.2
+
+  AA_LCR:
+    description: "Long context reasoning evaluation"
+    score: 30.7
+
+  CritPt:
+    description: "Research-level physics reasoning"
+    score: 1.4
+
+  SciCode:
+    description: "Python programming for scientific computing"
+    score: 34.4
+
+  Terminal_Bench_Hard:
+    description: "Agentic coding and terminal use"
+    score: 10.6
+
+  AA_Omniscience_Non_Hallucination_Rate:
+    description: "Rate of avoiding hallucination among non-correct responses"
+    score: 5.9
+
+"openai/gpt-oss-120b:free":
+  GPQA_Diamond:
+    description: "Graduate-level scientific reasoning"
+    score: 78.2
+
+  HLE:
+    description: "Expert-level questions across many fields"
+    score: 18.5
+
+  IFBench:
+    description: "Instruction-following benchmark"
+    score: 69.0
+
+  T2_Bench_Telecom:
+    description: "Conversational AI agents in dual-control scenarios"
+    score: 65.8
+
+  AA_LCR:
+    description: "Long context reasoning evaluation"
+    score: 50.7
+
+  CritPt:
+    description: "Research-level physics reasoning"
+    score: 1.1
+
+  SciCode:
+    description: "Python programming for scientific computing"
+    score: 38.9
+
+  Terminal_Bench_Hard:
+    description: "Agentic coding and terminal use"
+    score: 23.5
+
+  AA_Omniscience_Non_Hallucination_Rate:
+    description: "Rate of avoiding hallucination among non-correct responses"
+    score: 8.8
+
+"deepseek/deepseek-v4-flash:free":
+  GPQA_Diamond:
+    description: "Graduate-level scientific reasoning"
+    score: 86.7
+
+  HLE:
+    description: "Expert-level questions across many fields"
+    score: 27.8
+
+  IFBench:
+    description: "Instruction-following benchmark"
+    score: 73.5
+
+  T2_Bench_Telecom:
+    description: "Conversational AI agents in dual-control scenarios"
+    score: 95.6
+
+  AA_LCR:
+    description: "Long context reasoning evaluation"
+    score: 62.7
+
+  CritPt:
+    description: "Research-level physics reasoning"
+    score: 3.4
+
+  SciCode:
+    description: "Python programming for scientific computing"
+    score: 42.0
+
+  Terminal_Bench_Hard:
+    description: "Agentic coding and terminal use"
+    score: 38.6
+
+  AA_Omniscience_Non_Hallucination_Rate:
+    description: "Rate of avoiding hallucination among non-correct responses"
+    score: 10.3
+
+"moonshotai/kimi-k2.6:free":
+  GPQA_Diamond:
+    description: "Graduate-level scientific reasoning"
+    score: 91.1
+
+  HLE:
+    description: "Expert-level questions across many fields"
+    score: 35.9
+
+  IFBench:
+    description: "Instruction-following benchmark"
+    score: 76.0
+
+  T2_Bench_Telecom:
+    description: "Conversational AI agents in dual-control scenarios"
+    score: 95.9
+
+  AA_LCR:
+    description: "Long context reasoning evaluation"
+    score: 69.7
+
+  CritPt:
+    description: "Research-level physics reasoning"
+    score: 8.0
+
+  SciCode:
+    description: "Python programming for scientific computing"
+    score: 53.5
+
+  Terminal_Bench_Hard:
+    description: "Agentic coding and terminal use"
+    score: 43.9
+
+  AA_Omniscience_Non_Hallucination_Rate:
+    description: "Rate of avoiding hallucination among non-correct responses"
+    score: 60.7
