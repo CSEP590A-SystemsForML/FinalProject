@@ -27,7 +27,7 @@
   source_url: https://openrouter.ai/
   description: > 
     Very, very expensive and very competent. The reasoning and coding abilities of this model are 
-    roughly a first year Master's student (NOT PHD) when it comes to logic and reasoning.
+    roughly an entry level worker when it comes to logic and reasoning.
   total_params: 284
   active_params: 13
 
