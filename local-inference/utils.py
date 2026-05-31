@@ -37,6 +37,11 @@ class LocalInferenceManager:
         self.model = "ibm-granite/granite-4.1-3b"
         self.active_sem = asyncio.Semaphore(max_active)
 
+    def _quick_parse_contents(self, content):
+        start = content.find('{')
+        end = content.find('}')
+        return content[start:end+1]
+
     async def call_model(self, messages: list[dict[str, str]]):
         async with self.active_sem:
             response = await self.router_client.chat.completions.create(
@@ -48,9 +53,27 @@ class LocalInferenceManager:
                     "<|endoftext|>",
                 ]
             )
-
-        content = response.choices[0].message.content
-        return content
+            first_res = response.choices[0].message.content
+            first_res = self._quick_parse_contents(first_res)
+            messages.append({"role":"assistant", "content":first_res})
+            messages.append(
+                {
+                    "role": "user", 
+                    "content": (
+                        "Look at your own logic. Do you believe a student of the level as described in the model description is capable of this? "
+                        "Emit your final response in the same format and revise your reasoning and model_id if you believe you have made a mistake."
+                    )
+                })
+            second_res = await self.router_client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=0,
+                max_completion_tokens=8192,
+                stop=[
+                    "<|endoftext|>",
+                ]
+            )
+        return first_res, self._quick_parse_contents(second_res.choices[0].message.content)
 
 
 class LogicManager:
@@ -123,8 +146,12 @@ class LogicManager:
             {"role": "system", "content": self.router_prompt},
             {"role": "user", "content": str(request["problem"])},
         ]
-        content = await self.inference_manager.call_model(prompt)
-        print(f"For problem: {request['problem']}\n{content}")
+        first_res, second_res = await self.inference_manager.call_model(prompt)
+        print(
+            f"For problem: {request['problem']}\n"
+            f"First response: {first_res}\n"
+            f"Revised response: {second_res}\n"
+        )
         #self.simple_routing_logger(request, model_id, reasoning)
         # TODO: Add validation logic here to fuzzy match to a model to be safe?.
         # TODO: Add calling fastapi server with request data and model_id

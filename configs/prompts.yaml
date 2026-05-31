@@ -7,9 +7,10 @@
     The :free part is how the provider gives it, it is not free to you.
     The models will have access to tools such as playground environments to reason and 
     will not have to one-shot problems or may perform web searches.
-    Decompose what a problem presented entails briefly and when ready,
+    Decompose what a problem presented entails briefly and when ready
     Emit your response as a json in the format {'reasoning':brief explanation, 'model_id': model_id as seen from options}
     Remember, your goal is to minimize costs while solving these problems.
+    Also, ask yourself if you have ever seen a student of the level described solve a problem like the one you are presented with.
   "capabilities": >
     Also attached are benchmark scores for each of your options to help make your decision. 
     Emit ONLY the model id as your answer THE WAY IT IS DISPLAYED. ie provider/model_name:free

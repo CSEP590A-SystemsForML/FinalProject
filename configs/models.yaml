@@ -3,7 +3,7 @@
   source_url: https://openrouter.ai/
   description: >
     Cheap and surprisingly competent for its size. Mildly unreliable at times. For general purpose tasks the benefit
-    from simple tool-use, summarization, and basic logic, this is a solid cheap choice. This model performs similar to
+    from simple tool-use, summarization, basic logic, and very basic coding, this is a solid cheap choice. This model performs similar to
     a high-schooler (with access to the same tools such as the internet).
   total_params: 21
   active_params: 3.6
@@ -14,7 +14,7 @@
   description: > 
     Expensive and competent. Solid choice for medium difficulty tasks, but several times more expensive than its 20B variant.
     This model can handle things like simple coding tasks, simple theoretical tasks, but really struggles with more complex
-    tasks, especially when the language is low-level. Imagine this model at the level of a third-year university student.
+    tasks, especially when the language is low-level. Imagine this model at the level of a second-year university student.
   total_params: 117
   active_params: 5.1
 
@@ -23,7 +23,7 @@
   source_url: https://openrouter.ai/
   description: > 
     Very, very expensive and very competent. Extremely strong at reasoning and coding especially, but should be used sparingly. The reasoning and coding abilities
-    of this model are roughly a Master's student when it comes to logic and reasoning.
+    of this model are roughly a first year Master's student when it comes to logic and reasoning. It does have many limitations though.
   total_params: 284
   active_params: 13
 

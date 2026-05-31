@@ -30,9 +30,15 @@
         "difficulty": "medium"
     },
     {
-        "problem": "Explain how a spin lock is implemented in C under the hood. Implement a toy version as well that is still functional.",
+        "problem": "Explain how a spin lock is implemented in C under the hood. Implement a functional version of this.",
         "answer": "c",
         "verify": "t",
         "difficulty": "hard"
+    },
+    {
+        "problem": "Write a function that rotates a 2D array 90 degrees in Python.",
+        "answer": "c",
+        "verify": "t",
+        "difficulty": "easy"
     }
 ]
