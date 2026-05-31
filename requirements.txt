@@ -1,8 +1,0 @@
-fastapi>=0.115.0
-fastmcp>=2.0.0
-# vLLM inference engine (pulls in torch + transformers transitively)
-# NOTE: standard vllm is Linux-only (no Windows wheels). Use WSL2 or Docker on Windows.
-# vllm-metal provides Apple Silicon GPU support on macOS.
-vllm-metal>=0.8.0; sys_platform == "darwin"
-vllm>=0.8.0; sys_platform != "darwin"
-pyyaml
