@@ -71,6 +71,7 @@ CMD=(
     --trust-remote-code
     --disable-log-requests
     --kv-cache-dtype fp8
+    --reasoning-parser qwen3
 )
 
 if [ "$DTYPE" = "fp8" ]; then

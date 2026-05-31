@@ -1,4 +1,38 @@
 [
-    {"problem": "What is 2+2?", "answer": "4", "verify": "match", "difficulty": "easy"},
-    {"problem": "Write a function that adds two numbers together.", "answer": "4", "verify": "tests", "difficulty": "easy"}
+    {
+        "problem": "What is 2+2?",
+        "answer": "4",
+        "verify": "match",
+        "difficulty": "easy"
+    },
+    {
+        "problem": "Write a function that adds two numbers together.",
+        "answer": "4",
+        "verify": "tests",
+        "difficulty": "easy"
+    },
+    {
+        "problem": "What color is the sky on a clear day?",
+        "answer": "b",
+        "verify": "m",
+        "difficulty": "very_easy"
+    },
+    {
+        "problem": "What was the capital of Rome in 496 AD?",
+        "answer": "p",
+        "verify": "m",
+        "difficulty": "easy"
+    },
+    {
+        "problem": "Explain the benefits of smart pointers",
+        "answer": "p",
+        "verify": "h",
+        "difficulty": "medium"
+    },
+    {
+        "problem": "Explain how a spin lock is implemented in C under the hood.",
+        "answer": "c",
+        "verify": "t",
+        "difficulty": "hard"
+    }
 ]

@@ -5,21 +5,62 @@ from pathlib import Path
 import asyncio
 import pandas as pd
 
+class ProblemSetManager:
+    """
+    Class for managing the dataset of problems to solve and handing off the next problem when requested..
+    """
+    def __init__(self) -> None:
+        self.problem_set = pd.read_json(
+            Path(__file__).resolve().parent / "problems" / "problems.json"
+        )
+        self.problem_set = self.problem_set.sample(
+            frac=1,
+            random_state=42,
+        ).reset_index(drop=True)
+        self.index = 0
+
+    def get_next_problem(self):
+        if self.index >= len(self.problem_set):
+            return None
+        problem = self.problem_set.iloc[self.index]
+        self.index += 1
+        return problem.to_dict()
+
+
 class LocalInferenceManager:
     def __init__(
         self, 
-        prompt_type: Literal["cache", "capabilities"], 
         max_active: int, 
-        max_queued: int
     ) -> None:
         self.router_client = AsyncOpenAI(api_key="dummy", base_url="http://localhost:8000/v1")
         self.model = "Qwen/Qwen3.5-4B"
-        self.queued_sem = asyncio.Semaphore(max_queued)
         self.active_sem = asyncio.Semaphore(max_active)
-        self._init_base_prompt(prompt_type)
-        self._init_problem_set()
+        
+    async def call_model(self, messages: list[dict[str, str]]):
+        async with self.active_sem:
+            response = await self.router_client.chat.completions.create(
+                model=self.model,
+                messages = messages
+            )
+        msg = response.choices[0].message
+        reasoning = getattr(msg, "reasoning", None) or getattr(msg, "reasoning_content", None)
+        model_id = msg.content.strip()
+        return model_id, reasoning
 
-    def _init_base_prompt(self, prompt_type: Literal["cache", "capabilities"]):
+
+class LogicManager:
+    """
+    Class for managing which requests are active and implements the core routing logic.
+    Ensures that the vllm server always has adequate work, sends problems to the model server, and logs routing metrics.
+    """
+    def __init__(self,
+        prompt_type: Literal["cache", "capabilities"], 
+        max_active: int
+    ) -> None:
+        self.inference_manager = LocalInferenceManager(max_active)
+        self._init_routing_prompt(prompt_type)
+        
+    def _init_routing_prompt(self, prompt_type: Literal["cache", "capabilities"]):
         configs_path = Path(__file__).resolve().parent / "configs"
         with open(configs_path / "models.yaml") as c:
             models_config = yaml.safe_load(c)
@@ -33,7 +74,7 @@ class LocalInferenceManager:
                 ]
             )
             self.router_prompt = (
-                f"{prompts_config["router"]["cache"]}"
+                f"{prompts_config['router']['cache']}"
                 "Your options are:\n"
                 f"{models_prompt}"
             )
@@ -41,38 +82,54 @@ class LocalInferenceManager:
             with open(configs_path / "benchmarks.yaml") as c:
                 benchmarks_config = yaml.safe_load(c)
             benchmarks_prompts = {
-                model_id: "\n".join([f"{benchmark['description']}: {benchmark['score']}" for benchmark in benchmarks_config[model_id].keys()])
+                model_id: "\n".join(
+                    [
+                        f"{benchmark['description']}: {benchmark['score']}"
+                        for benchmark in benchmarks_config[model_id].values()
+                    ]
+                )
                 for model_id in benchmarks_config.keys()
-                
             }
             models_prompt = (
                 "\n".join(
                     [
                         (
-                            f"{model_id}: {models_config[model_id]['total_params']}B total, {models_config[model_id]['active_params']}B active."
+                            f"{model_id}: {models_config[model_id]['total_params']}B total, {models_config[model_id]['active_params']}B active.\n"
                             f"{benchmarks_prompts[model_id]}"
                         ) for model_id in models_config.keys()
                     ]
                 )
             )
             self.router_prompt = (
-                f"{prompts_config["router"]["cache"]}"
-                f"{prompts_config["router"]["capabilities"]}"
+                f"{prompts_config['router']['cache']}"
+                f"{prompts_config['router']['capabilities']}"
                 "Your options are:\n"
                 f"{models_prompt}"
             )
 
-    def _init_problem_set(self):
-        self.problem_set = pd.read_json(Path(__file__).resolve().parent / "problems" / "problems.json")
-        self.problem_set.sample(frac=1, random_state=42).reset_index(drop=True)
+    async def handle(self, request_type: Literal["problem", "solution"], request):
+        if request_type == "problem":
+            return await self.handle_problem(request)
+        else:
+            return await self.handle_solution(request)
 
-    async def route_problem(self, problem_prompt: str):
-        response = await self.router_client.chat.completion.create(
-            model=self.model,
-            messages = [
-                {"system": self.router_prompt},
-                {"user": problem_prompt}
-            ]
-        )
+    async def handle_problem(self, request):
+        prompt = [
+            {"role": "system", "content": self.router_prompt},
+            {"role": "user", "content": str(request["problem"])},
+        ]
+        model_id, reasoning = await self.inference_manager.call_model(prompt)
+        self.simple_routing_logger(request, model_id, reasoning)
+        # TODO: Add validation logic here to fuzzy match to a model to be safe?.
+        # TODO: Add calling fastapi server with request data and model_id
+        # TODO: Add actual heurisitc logging.
+        return
 
+    async def handle_solution(self, request):
+        raise NotImplemented("Local model cannot handle solutions yet.")
+
+    def simple_routing_logger(self, request, model_id, reasoning):
+        print("=" * 30)
+        print(f"For a problem of {request['difficulty']}, router chose {model_id}")
+        print(f"Reasoning trace: {reasoning}")
     
