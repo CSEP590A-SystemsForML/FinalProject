@@ -4,8 +4,9 @@
     Given a problem, you must pick which model is the best choice to handle this problem. 
     You want to choose the model that has a high likelyhood of correctly solving the problem, 
     but minimizing cost by calling the right size model for the job.
+    Emit ONLY the model id as your answer THE WAY IT IS DISPLAYED. ie provider/model_name:free
   "capabilities": >
-    Below are the relevant benchmark scores for each of your options. 
+    Also attached are benchmark scores for each of your options to help make your decision. 
 
 
 "optimizations":

@@ -1,27 +1,23 @@
-small_model:
+"openai/gpt-oss-20b:free":
   source: OpenRouter 
   source_url: https://openrouter.ai/
-  id: openai/gpt-oss-20b:free
   total_params: 21
   active_params: 3.6
 
-medium_model:
+"openai/gpt-oss-120b:free":
   source: OpenRouter 
   source_url: https://openrouter.ai/
-  id: openai/gpt-oss-120b:free
   total_params: 117
   active_params: 5.1
 
-large_model:
+"deepseek/deepseek-v4-flash:free":
   source: OpenRouter 
   source_url: https://openrouter.ai/
-  id: deepseek/deepseek-v4-flash:free
   total_params: 284
   active_params: 13
 
-largest_model:
+"moonshotai/kimi-k2.6:free":
   source: OpenRouter 
   source_url: https://openrouter.ai/
-  id: moonshotai/kimi-k2.6:free
   total_params: 1100
   active_params: 32
