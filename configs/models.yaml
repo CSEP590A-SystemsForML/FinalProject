@@ -1,9 +1,14 @@
+#"ibm-granite/granite-4.1-3b":
+#  description: >
+#    This model is the cheapest at approximately 10% the cost of the next smallest model. It is highly unreliable. It has the reasoning ability of a sixth grader.
+#  total_params: 3
+#  active_params: 3
+
 "openai/gpt-oss-20b:free":
   source: OpenRouter 
   source_url: https://openrouter.ai/
   description: >
-    Cheap and surprisingly competent for its size. Mildly unreliable at times. For general purpose tasks the benefit
-    from simple tool-use, summarization, basic logic, and very basic coding, this is a solid cheap choice. This model performs similar to
+    Cheap and surprisingly competent for its size. Mildly unreliable at times. This model performs similarly to
     a high-schooler (with access to the same tools such as the internet).
   total_params: 21
   active_params: 3.6
@@ -13,8 +18,7 @@
   source_url: https://openrouter.ai/
   description: > 
     Expensive and competent. Solid choice for medium difficulty tasks, but several times more expensive than its 20B variant.
-    This model can handle things like simple coding tasks, simple theoretical tasks, but really struggles with more complex
-    tasks, especially when the language is low-level. Imagine this model at the level of a second-year university student.
+    This model performs at the level of a second-year university student.
   total_params: 117
   active_params: 5.1
 
@@ -22,8 +26,8 @@
   source: OpenRouter 
   source_url: https://openrouter.ai/
   description: > 
-    Very, very expensive and very competent. Extremely strong at reasoning and coding especially, but should be used sparingly. The reasoning and coding abilities
-    of this model are roughly a first year Master's student when it comes to logic and reasoning. It does have many limitations though.
+    Very, very expensive and very competent. The reasoning and coding abilities of this model are 
+    roughly a first year Master's student (NOT PHD) when it comes to logic and reasoning.
   total_params: 284
   active_params: 13
 
