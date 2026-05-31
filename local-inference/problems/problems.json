@@ -1,0 +1,4 @@
+[
+    {"problem": "What is 2+2?", "answer": "4", "verify": "match", "difficulty": "easy"},
+    {"problem": "Write a function that adds two numbers together.", "answer": "4", "verify": "tests", "difficulty": "easy"}
+]
