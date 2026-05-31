@@ -4,6 +4,7 @@ import yaml
 from pathlib import Path
 import asyncio
 import pandas as pd
+import re
 
 class ProblemSetManager:
     """
@@ -32,20 +33,24 @@ class LocalInferenceManager:
         self, 
         max_active: int, 
     ) -> None:
-        self.router_client = AsyncOpenAI(api_key="dummy", base_url="http://localhost:8000/v1")
-        self.model = "Qwen/Qwen3.5-4B"
+        self.router_client = AsyncOpenAI(api_key="dummy", base_url="http://localhost:7654/v1")
+        self.model = "ibm-granite/granite-4.1-3b"
         self.active_sem = asyncio.Semaphore(max_active)
-        
+
     async def call_model(self, messages: list[dict[str, str]]):
         async with self.active_sem:
             response = await self.router_client.chat.completions.create(
                 model=self.model,
-                messages = messages
+                messages=messages,
+                temperature=0,
+                max_completion_tokens=8192,
+                stop=[
+                    "<|endoftext|>",
+                ]
             )
-        msg = response.choices[0].message
-        reasoning = getattr(msg, "reasoning", None) or getattr(msg, "reasoning_content", None)
-        model_id = msg.content.strip()
-        return model_id, reasoning
+
+        content = response.choices[0].message.content
+        return content
 
 
 class LogicManager:
@@ -61,7 +66,7 @@ class LogicManager:
         self._init_routing_prompt(prompt_type)
         
     def _init_routing_prompt(self, prompt_type: Literal["cache", "capabilities"]):
-        configs_path = Path(__file__).resolve().parent / "configs"
+        configs_path = Path(__file__).resolve().parent.parent / "configs"
         with open(configs_path / "models.yaml") as c:
             models_config = yaml.safe_load(c)
         with open(configs_path / "prompts.yaml") as c:
@@ -69,7 +74,7 @@ class LogicManager:
         if prompt_type == "cache":
             models_prompt = "\n".join(
                 [
-                    f"{model_id}: {models_config[model_id]['total_params']}B total, {models_config[model_id]['active_params']}B active." 
+                    f"{model_id}: {models_config[model_id]['total_params']}B total, {models_config[model_id]['active_params']}B active. \nQuick Description: {models_config[model_id]['description']}" 
                     for model_id in models_config.keys()
                 ]
             )
@@ -118,8 +123,9 @@ class LogicManager:
             {"role": "system", "content": self.router_prompt},
             {"role": "user", "content": str(request["problem"])},
         ]
-        model_id, reasoning = await self.inference_manager.call_model(prompt)
-        self.simple_routing_logger(request, model_id, reasoning)
+        content = await self.inference_manager.call_model(prompt)
+        print(f"For problem: {request['problem']}\n{content}")
+        #self.simple_routing_logger(request, model_id, reasoning)
         # TODO: Add validation logic here to fuzzy match to a model to be safe?.
         # TODO: Add calling fastapi server with request data and model_id
         # TODO: Add actual heurisitc logging.
@@ -131,5 +137,7 @@ class LogicManager:
     def simple_routing_logger(self, request, model_id, reasoning):
         print("=" * 30)
         print(f"For a problem of {request['difficulty']}, router chose {model_id}")
+        print("+" * 30)
         print(f"Reasoning trace: {reasoning}")
+        print("-" * 30)
     

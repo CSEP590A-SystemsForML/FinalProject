@@ -6,10 +6,10 @@
         "difficulty": "easy"
     },
     {
-        "problem": "Write a function that adds two numbers together.",
+        "problem": "Write a FlashAttention CUDA kernel that modifies the PTX code to avoid having to write back to SMEM between the QK^T operation and multiplying by V on the tensor cores",
         "answer": "4",
         "verify": "tests",
-        "difficulty": "easy"
+        "difficulty": "hard"
     },
     {
         "problem": "What color is the sky on a clear day?",
@@ -30,7 +30,7 @@
         "difficulty": "medium"
     },
     {
-        "problem": "Explain how a spin lock is implemented in C under the hood.",
+        "problem": "Explain how a spin lock is implemented in C under the hood. Implement a toy version as well that is still functional.",
         "answer": "c",
         "verify": "t",
         "difficulty": "hard"
