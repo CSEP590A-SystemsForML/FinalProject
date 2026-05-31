@@ -1,4 +1,4 @@
-from interfaces import InferenceConfig, ModelConfig
+from server.interfaces import InferenceConfig, ModelConfig
 
 def calculate_cost(
     model_config: ModelConfig, 
