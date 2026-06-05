@@ -9,7 +9,7 @@ Usage:
 
 Environment Variables:
   MODEL          Hugging Face model name
-                 Default: Qwen/Qwen3.5-4B
+                 Default: ibm-granite/granite-4.1-3b
 
   DTYPE          Quantization mode
                  Values: bf16, fp8
@@ -25,7 +25,7 @@ Examples:
 
   ./serve.sh DTYPE=fp8
 
-  ./serve.sh MODEL=Qwen/Qwen3.5-8B
+  ./serve.sh MODEL=ibm-granite/granite-4.1-3b
 
   ./serve.sh DTYPE=fp8 MAX_NUM_SEQS=32
 
@@ -43,7 +43,7 @@ EOF
     exit 0
 fi
 
-MODEL="${MODEL:-Qwen/Qwen3.5-4B}"
+MODEL="${MODEL:-ibm-granite/granite-4.1-3b}"
 
 # Supported values: bf16, fp8
 DTYPE="${DTYPE:-bf16}"
@@ -71,6 +71,7 @@ CMD=(
     --trust-remote-code
     --disable-log-requests
     --kv-cache-dtype fp8
+    --reasoning-parser qwen3
 )
 
 if [ "$DTYPE" = "fp8" ]; then

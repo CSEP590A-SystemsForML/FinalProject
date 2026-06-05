@@ -1,27 +1,41 @@
-small_model:
+#"ibm-granite/granite-4.1-3b":
+#  description: >
+#    This model is the cheapest at approximately 10% the cost of the next smallest model. It is highly unreliable. It has the reasoning ability of a sixth grader.
+#  total_params: 3
+#  active_params: 3
+
+"openai/gpt-oss-20b:free":
   source: OpenRouter 
   source_url: https://openrouter.ai/
-  id: openai/gpt-oss-20b:free
+  description: >
+    Cheap and surprisingly competent for its size. Mildly unreliable at times. This model performs similarly to
+    a high-schooler (with access to the same tools such as the internet).
   total_params: 21
   active_params: 3.6
 
-medium_model:
+"openai/gpt-oss-120b:free":
   source: OpenRouter 
   source_url: https://openrouter.ai/
-  id: openai/gpt-oss-120b:free
+  description: > 
+    Expensive and competent. Solid choice for medium difficulty tasks, but several times more expensive than its 20B variant.
+    This model performs at the level of a second-year university student.
   total_params: 117
   active_params: 5.1
 
-large_model:
+"deepseek/deepseek-v4-flash:free":
   source: OpenRouter 
   source_url: https://openrouter.ai/
-  id: deepseek/deepseek-v4-flash:free
+  description: > 
+    Very, very expensive and very competent. The reasoning and coding abilities of this model are 
+    roughly an entry level worker when it comes to logic and reasoning.
   total_params: 284
   active_params: 13
 
-largest_model:
+"moonshotai/kimi-k2.6:free":
   source: OpenRouter 
   source_url: https://openrouter.ai/
-  id: moonshotai/kimi-k2.6:free
+  description: >
+    By far the most powerful model on this list. Only model capable of going toe to toe with frontier lab quality models like Claude Opus. Should only be used when previous models will fail.
+    It has a PhD student level of reasoning and logic with massive reasoning capabilities and the ability to iteratively solve a problem.
   total_params: 1100
   active_params: 32
