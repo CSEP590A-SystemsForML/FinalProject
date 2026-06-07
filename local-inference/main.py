@@ -21,14 +21,11 @@ async def main_loop(prompt_type, max_active):
         
     while (problem := problem_set_manager.get_next_problem()) is not None:
         await queue_sem.acquire()
-        print(f"SUBMITTING REQUEST: {problem['problem']}")
         task = asyncio.create_task(submit("problem", problem))
         tasks.add(task)
         task.add_done_callback(discard_and_ignore)
-    
+        
     await asyncio.gather(*tasks, return_exceptions=True)
-
-    # TODO: Begin polling server for final cost.
 
 if __name__ == "__main__":
     import sys
