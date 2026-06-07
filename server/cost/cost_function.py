@@ -61,14 +61,11 @@ if __name__ == "__main__":
     config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "configs", "models.yaml")
     with open(config_path, "r") as f:
         models_data = yaml.safe_load(f)
-        
     # Mock inference config: 1 million input, 1 million output
     comp_config = CompletionConfig(prompt_tokens=1_000_000, completion_tokens=1_000_000)
     inf_config = InferenceConfig(completions=[comp_config])
-    
     print(f"{'Model ID':<35} | {'Cost ($)'}")
     print("-" * 50)
-    
     for model_id, model_info in models_data.items():
         m_config = ModelConfig(
             id=model_id,
