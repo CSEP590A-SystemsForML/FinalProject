@@ -12,7 +12,7 @@ import httpx
 from fastmcp import FastMCP
 
 
-mcp = FastMCP("basic-dev-tools")
+mcp = FastMCP("tools")
 
 DEFAULT_TIMEOUT_SECONDS = 20
 MAX_TIMEOUT_SECONDS = 300
