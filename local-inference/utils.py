@@ -127,6 +127,12 @@ class ResolutionServerClient:
             response.raise_for_status()
             return response.json()
 
+    async def local_solve(self, payload: dict) -> dict:
+        async with httpx.AsyncClient(timeout=120) as client:
+            response = await client.post(f"{self.server_url}/local-solve", json=payload)
+            response.raise_for_status()
+            return response.json()
+
 
 class LogicManager:
     """
@@ -144,11 +150,13 @@ class LogicManager:
         server_url: str,
         run_id: str,
         max_attempts: int,
+        local_model_solves: bool = False,
     ) -> None:
         self.inference_manager = LocalInferenceManager(max_active)
         self.resolution_server = ResolutionServerClient(server_url)
         self.run_id = run_id
         self.max_attempts = max_attempts
+        self.local_model_solves = local_model_solves
         self.models_config = {}
         self._init_routing_prompt(prompt_type)
 
@@ -244,7 +252,38 @@ class LogicManager:
             "max_attempts": self.max_attempts,
         }
 
+    def _can_solve_locally(self, request: dict) -> bool:
+        return (
+            self.local_model_solves
+            and str(request.get("difficulty", "")).strip().lower() == "very_easy"
+            and str(request.get("verify", "")).strip().lower() == "match"
+            and not pd.isna(request.get("answer"))
+        )
+
+    def _build_local_solve_payload(self, request: dict) -> dict:
+        return {
+            "run_id": self.run_id,
+            "problem_id": int(request["problem_id"]),
+            "problem": str(request["problem"]),
+            "answer": str(request.get("answer")),
+            "verify": str(request.get("verify", "match")),
+            "difficulty": str(request.get("difficulty", "very_easy")),
+            "category": None if pd.isna(request.get("category")) else request.get("category"),
+            "final_answer": str(request.get("answer")),
+            "model_id": "local-router",
+            "router_reasoning": "local_model_solves optimization handled very_easy match problem locally.",
+        }
+
     async def handle_problem(self, request):
+        if self._can_solve_locally(request):
+            local_payload = self._build_local_solve_payload(request)
+            local_response = await self.resolution_server.local_solve(local_payload)
+            print(
+                f"For problem_id={request['problem_id']}: {request['problem']}\n"
+                f"Local solve response: {local_response}\n"
+            )
+            return local_response
+
         prompt = [
             {"role": "system", "content": self.router_prompt},
             {"role": "user", "content": str(request["problem"])},

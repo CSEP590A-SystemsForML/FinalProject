@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
-from server.interfaces import SolveRequest, SolveResponse
+from server.interfaces import LocalSolveRequest, SolveRequest, SolveResponse
 from server.resolution.resolution import solve_problem
 
 app = FastAPI()
@@ -147,7 +147,48 @@ async def solve(solve_request: SolveRequest) -> SolveResponse:
     log_routing_decision(solve_request)
     _run_optimizations = get_run_optimizations(solve_request.run_id)
 
-    solve_response = await solve_problem(solve_request)
+    solve_response = await solve_problem(solve_request, _run_optimizations)
+    log_problem_solving_result(solve_response)
+    return solve_response
+
+
+@app.post("/local-solve", response_model=SolveResponse)
+async def local_solve(local_request: LocalSolveRequest) -> SolveResponse:
+    """
+    Records a problem solved locally by local-inference.
+
+    This keeps metrics centralized in the server while allowing the
+    local_model_solves optimization to avoid an external model call.
+    """
+
+    routing_request = SolveRequest(
+        run_id=local_request.run_id,
+        problem_id=local_request.problem_id,
+        problem=local_request.problem,
+        answer=local_request.answer,
+        verify=local_request.verify,
+        difficulty=local_request.difficulty,
+        model_id=local_request.model_id,
+        router_reasoning=local_request.router_reasoning,
+        category=local_request.category,
+    )
+    log_routing_decision(routing_request)
+
+    solve_response = SolveResponse(
+        run_id=local_request.run_id,
+        problem_id=local_request.problem_id,
+        model_id=local_request.model_id,
+        solved=True,
+        attempts=1,
+        final_answer=local_request.final_answer,
+        num_tool_calls=0,
+        tool_invocations=[],
+        prompt_tokens=0,
+        completion_tokens=0,
+        total_cost=0.0,
+        escalated=False,
+        error=None,
+    )
     log_problem_solving_result(solve_response)
     return solve_response
 

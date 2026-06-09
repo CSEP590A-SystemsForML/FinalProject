@@ -1,32 +1,60 @@
 from server.cost.cost_function import calculate_model_call_cost
 from server.interfaces import ModelCallResult, SolveRequest, SolveResponse
+from server.resolution.optimizations import caveman_prompt, compress_web_search
+from server.tools import truncate_web_context, web_search_tool
 from server.utils import query_model
-from server.validation import registry
-from server.validation.utils import direct_match, model_judge, run_code
+from server.validation.utils import normalize_verify_mode, validate
 
 
 STRONGEST_MODEL_ID = "moonshotai/kimi-k2.6:free"
 
 
-def normalize_verify_mode(verify: str | None) -> str:
-    if not verify:
-        return "match"
-
-    normalized = verify.strip().lower()
-    aliases = {
-        "m": "match",
-        "exact": "match",
-        "direct": "match",
-        "t": "tests",
-        "test": "tests",
-        "h": "heuristic",
-        "heuristics": "heuristic",
-        "j": "judge",
-    }
-    return aliases.get(normalized, normalized)
+def _optimization_enabled(run_optimizations: dict | None, key: str) -> bool:
+    if not run_optimizations:
+        return False
+    return bool(run_optimizations.get(key))
 
 
-def build_solver_messages(solve_request: SolveRequest) -> list[dict[str, str]]:
+async def prepare_tool_context(
+    solve_request: SolveRequest,
+    run_optimizations: dict | None = None,
+) -> tuple[str, list[str]]:
+    """
+    Deterministic MVP tool use.
+
+    If a problem is categorized as web and has a source_url, fetch the page and
+    append truncated content to the solver context. This avoids model-native tool
+    calling while still measuring tool usage in the server.
+    """
+
+    tool_invocations = []
+    context_parts = []
+
+    if solve_request.category == "web" and solve_request.source_url:
+        result = await web_search_tool(solve_request.source_url)
+        tool_invocations.append(result.name)
+        if result.ok:
+            web_context = result.output
+            if _optimization_enabled(run_optimizations, "web_search_compression"):
+                web_context = compress_web_search(web_context)
+            context_parts.append(
+                "Fetched web context:\n"
+                f"{truncate_web_context(web_context)}"
+            )
+        else:
+            context_parts.append(
+                "Web fetch failed:\n"
+                f"{result.error or 'unknown error'}"
+            )
+
+    return "\n\n".join(context_parts), tool_invocations
+
+
+def build_solver_messages(
+    solve_request: SolveRequest,
+    tool_context: str = "",
+    run_optimizations: dict | None = None,
+) -> list[dict[str, str]]:
     """
     Build the minimal MVP solver prompt.
 
@@ -48,44 +76,38 @@ def build_solver_messages(solve_request: SolveRequest) -> list[dict[str, str]]:
             "Return the answer clearly and concisely. Avoid unnecessary explanation."
         )
 
+    system_prompt = (
+        "You solve benchmark problems. Follow the requested answer format exactly. "
+        f"{answer_instruction}"
+    )
+    if _optimization_enabled(run_optimizations, "caveman"):
+        system_prompt = caveman_prompt(system_prompt)
+
     return [
         {
             "role": "system",
-            "content": (
-                "You solve benchmark problems. Follow the requested answer format exactly. "
-                f"{answer_instruction}"
-            ),
+            "content": system_prompt,
         },
         {
             "role": "user",
-            "content": solve_request.problem,
+            "content": (
+                f"{solve_request.problem}\n\n{tool_context}"
+                if tool_context
+                else solve_request.problem
+            ),
         },
     ]
 
 
 def validate_answer(solve_request: SolveRequest, answer: str) -> bool:
-    verify_mode = normalize_verify_mode(solve_request.verify)
-
-    if verify_mode == "match":
-        return direct_match(answer, solve_request.answer or "")
-
-    if verify_mode == "tests":
-        if not solve_request.assert_cases:
-            return False
-        return run_code(answer, solve_request.assert_cases)
-
-    if verify_mode == "judge":
-        return model_judge(solve_request.problem, answer, solve_request.answer or "")
-
-    if verify_mode == "heuristic":
-        return registry.test(
-            solve_request.problem_id,
-            True,
-            answer,
-            solve_request.answer or "",
-        )
-
-    return direct_match(answer, solve_request.answer or "")
+    return validate(
+        problem=solve_request.problem,
+        model_answer=answer,
+        expected_answer=solve_request.answer,
+        verify=solve_request.verify,
+        problem_id=solve_request.problem_id,
+        assert_cases=solve_request.assert_cases,
+    )
 
 
 def cost_model_call(call_result: ModelCallResult) -> float:
@@ -103,7 +125,10 @@ def cost_model_call(call_result: ModelCallResult) -> float:
         return 0.0
 
 
-async def solve_problem(solve_request: SolveRequest) -> SolveResponse:
+async def solve_problem(
+    solve_request: SolveRequest,
+    run_optimizations: dict | None = None,
+) -> SolveResponse:
     """
     Minimal MVP resolution loop.
 
@@ -124,7 +149,8 @@ async def solve_problem(solve_request: SolveRequest) -> SolveResponse:
     escalated = False
     final_model_id = solve_request.model_id
 
-    messages = build_solver_messages(solve_request)
+    tool_context, tool_invocations = await prepare_tool_context(solve_request, run_optimizations)
+    messages = build_solver_messages(solve_request, tool_context, run_optimizations)
 
     for _ in range(solve_request.max_attempts):
         attempts += 1
@@ -171,8 +197,8 @@ async def solve_problem(solve_request: SolveRequest) -> SolveResponse:
         solved=solved,
         attempts=attempts,
         final_answer=final_answer,
-        num_tool_calls=0,
-        tool_invocations=[],
+        num_tool_calls=len(tool_invocations),
+        tool_invocations=tool_invocations,
         prompt_tokens=total_prompt_tokens,
         completion_tokens=total_completion_tokens,
         total_cost=total_cost,

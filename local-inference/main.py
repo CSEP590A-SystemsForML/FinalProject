@@ -5,7 +5,7 @@ from datetime import datetime
 from utils import LogicManager, ProblemSetManager
 
 
-async def main_loop(prompt_type, max_active, server_url, run_id, max_attempts):
+async def main_loop(prompt_type, max_active, server_url, run_id, max_attempts, local_model_solves):
     problem_set_manager = ProblemSetManager()
     logic_manager = LogicManager(
         prompt_type=prompt_type,
@@ -13,6 +13,7 @@ async def main_loop(prompt_type, max_active, server_url, run_id, max_attempts):
         server_url=server_url,
         run_id=run_id,
         max_attempts=max_attempts,
+        local_model_solves=local_model_solves,
     )
     queue_sem = asyncio.Semaphore(max_active + 1)
     tasks = set()
@@ -69,6 +70,11 @@ def build_parser():
         help="Maximum model attempts per problem before escalation/failure.",
     )
     parser.add_argument(
+        "--local-model-solves",
+        action="store_true",
+        help="Allow local inference to solve very easy exact-match problems without an external model call.",
+    )
+    parser.add_argument(
         "--test",
         action="store_true",
         help="Print router prompts and exit.",
@@ -87,6 +93,7 @@ if __name__ == "__main__":
                 server_url=args.server_url,
                 run_id=args.run_id or "prompt_test",
                 max_attempts=args.max_attempts,
+                local_model_solves=args.local_model_solves,
             )
             print(f"\n--- {prompt_type} prompt ---\n")
             print(lm.router_prompt)
@@ -99,5 +106,6 @@ if __name__ == "__main__":
                 server_url=args.server_url,
                 run_id=run_id,
                 max_attempts=args.max_attempts,
+                local_model_solves=args.local_model_solves,
             )
         )

@@ -1,44 +1,59 @@
 [
-    {
-        "problem": "What is 2+2?",
-        "answer": "4",
-        "verify": "match",
-        "difficulty": "easy"
-    },
-    {
-        "problem": "Write a FlashAttention CUDA kernel that modifies the PTX code to avoid having to write back to SMEM between the QK^T operation and multiplying by V on the tensor cores",
-        "answer": "4",
-        "verify": "tests",
-        "difficulty": "hard"
-    },
-    {
-        "problem": "What color is the sky on a clear day?",
-        "answer": "b",
-        "verify": "m",
-        "difficulty": "very_easy"
-    },
-    {
-        "problem": "What was the capital of Rome in 496 AD?",
-        "answer": "p",
-        "verify": "m",
-        "difficulty": "easy"
-    },
-    {
-        "problem": "Explain the benefits of smart pointers",
-        "answer": "p",
-        "verify": "h",
-        "difficulty": "medium"
-    },
-    {
-        "problem": "Explain how a spin lock is implemented in C under the hood. Implement a functional version of this.",
-        "answer": "c",
-        "verify": "t",
-        "difficulty": "hard"
-    },
-    {
-        "problem": "Write a function that rotates a 2D array 90 degrees in Python.",
-        "answer": "c",
-        "verify": "t",
-        "difficulty": "easy"
-    }
+  {
+    "problem_id": 0,
+    "problem": "What is 2+2?",
+    "answer": "4",
+    "verify": "match",
+    "difficulty": "very_easy",
+    "category": "math"
+  },
+  {
+    "problem_id": 1,
+    "problem": "Write a FlashAttention CUDA kernel that modifies the PTX code to avoid having to write back to SMEM between the QK^T operation and multiplying by V on the tensor cores",
+    "answer": "",
+    "verify": "heuristic",
+    "difficulty": "hard",
+    "category": "code"
+  },
+  {
+    "problem_id": 2,
+    "problem": "What color is the sky on a clear day? Answer with one lowercase word.",
+    "answer": "blue",
+    "verify": "match",
+    "difficulty": "very_easy",
+    "category": "factual"
+  },
+  {
+    "problem_id": 3,
+    "problem": "What was the capital of the Western Roman Empire in 496 AD? Answer with one city name.",
+    "answer": "Ravenna",
+    "verify": "match",
+    "difficulty": "easy",
+    "category": "factual"
+  },
+  {
+    "problem_id": 4,
+    "problem": "Explain the benefits of smart pointers.",
+    "answer": "Smart pointers manage memory ownership and help prevent leaks.",
+    "verify": "heuristic",
+    "difficulty": "medium",
+    "category": "reasoning"
+  },
+  {
+    "problem_id": 5,
+    "problem": "Explain how a spin lock is implemented in C under the hood. Implement a functional version of this.",
+    "answer": "",
+    "verify": "heuristic",
+    "difficulty": "hard",
+    "category": "code"
+  },
+  {
+    "problem_id": 6,
+    "problem": "Write a function that rotates a 2D array 90 degrees clockwise in Python. Name the function rotate_grid.",
+    "answer": "",
+    "verify": "tests",
+    "difficulty": "easy",
+    "category": "code",
+    "assert_cases": "assert rotate_grid([[1, 2], [3, 4]]) == [[3, 1], [4, 2]]\nassert rotate_grid([[1, 2, 3], [4, 5, 6]]) == [[4, 1], [5, 2], [6, 3]]"
+  }
 ]

@@ -83,6 +83,27 @@ class SolveRequest(BaseModel):
         )
 
 
+class LocalSolveRequest(BaseModel):
+    """
+    Request used when local-inference handles a very easy problem without an
+    external model call.
+
+    Metrics still go through the server so routing/problem-solving accounting
+    stays centralized.
+    """
+
+    run_id: str
+    problem_id: int
+    problem: str
+    answer: str | None = None
+    verify: str = "match"
+    difficulty: str = "very_easy"
+    category: str | None = None
+    final_answer: str
+    model_id: str = "local-router"
+    router_reasoning: str | None = "Solved locally by local_model_solves optimization."
+
+
 class SolveResponse(BaseModel):
     """
     Canonical MVP /solve response.

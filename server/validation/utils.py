@@ -1,3 +1,25 @@
+def normalize_verify_mode(verify: str | None) -> str:
+    """
+    Normalize MVP validation mode aliases.
+    """
+
+    if not verify:
+        return "match"
+
+    normalized = verify.strip().lower()
+    aliases = {
+        "m": "match",
+        "exact": "match",
+        "direct": "match",
+        "t": "tests",
+        "test": "tests",
+        "h": "heuristic",
+        "heuristics": "heuristic",
+        "j": "judge",
+    }
+    return aliases.get(normalized, normalized)
+
+
 def run_code(function: str, assert_cases: str) -> bool:
     """
     Executes the given Python function definition combined with assert_cases.
@@ -50,3 +72,49 @@ def model_judge(question: str, model_answer: str, correct_answer: str) -> bool:
 
     res_clean = response.text.strip().lower().strip(" .!,;:")
     return "yes" in res_clean or "true" in res_clean
+
+
+def validate(
+    problem: str,
+    model_answer: str,
+    expected_answer: str | None,
+    verify: str | None,
+    problem_id: int | None = None,
+    assert_cases: str | None = None,
+) -> bool:
+    """
+    Generic MVP validation entry point.
+
+    Supported verify modes:
+    - match: exact string match
+    - tests: execute model_answer as code with assert_cases
+    - judge: LLM judge against expected_answer
+    - heuristic: problem-specific registry validator
+    """
+
+    verify_mode = normalize_verify_mode(verify)
+
+    if verify_mode == "match":
+        return direct_match(model_answer, expected_answer or "")
+
+    if verify_mode == "tests":
+        if not assert_cases:
+            return False
+        return run_code(model_answer, assert_cases)
+
+    if verify_mode == "judge":
+        return model_judge(problem, model_answer, expected_answer or "")
+
+    if verify_mode == "heuristic":
+        if problem_id is None:
+            return False
+        from server.validation import registry
+
+        return registry.test(
+            problem_id,
+            True,
+            model_answer,
+            expected_answer or "",
+        )
+
+    return direct_match(model_answer, expected_answer or "")
