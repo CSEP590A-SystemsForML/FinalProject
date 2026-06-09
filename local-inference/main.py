@@ -5,8 +5,17 @@ from datetime import datetime
 from utils import LogicManager, ProblemSetManager
 
 
-async def main_loop(prompt_type, max_active, server_url, run_id, max_attempts, local_model_solves):
-    problem_set_manager = ProblemSetManager()
+async def main_loop(
+    prompt_type,
+    max_active,
+    server_url,
+    run_id,
+    max_attempts,
+    local_model_solves,
+    limit,
+    problem_id,
+):
+    problem_set_manager = ProblemSetManager(limit=limit, problem_id=problem_id)
     logic_manager = LogicManager(
         prompt_type=prompt_type,
         max_active=max_active,
@@ -75,6 +84,18 @@ def build_parser():
         help="Allow local inference to solve very easy exact-match problems without an external model call.",
     )
     parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Only process the first N shuffled problems. Useful for smoke tests.",
+    )
+    parser.add_argument(
+        "--problem-id",
+        type=int,
+        default=None,
+        help="Only process the problem with this problem_id. Useful for deterministic smoke tests.",
+    )
+    parser.add_argument(
         "--test",
         action="store_true",
         help="Print router prompts and exit.",
@@ -107,5 +128,7 @@ if __name__ == "__main__":
                 run_id=run_id,
                 max_attempts=args.max_attempts,
                 local_model_solves=args.local_model_solves,
+                limit=args.limit,
+                problem_id=args.problem_id,
             )
         )

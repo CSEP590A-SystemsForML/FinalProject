@@ -16,16 +16,28 @@ class ProblemSetManager:
     Class for managing the dataset of problems to solve and handing off the next problem when requested.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, limit: int | None = None, problem_id: int | None = None) -> None:
         self.problem_set = pd.read_json(
             Path(__file__).resolve().parent / "problems" / "problems.json"
         )
         if "problem_id" not in self.problem_set.columns:
             self.problem_set["problem_id"] = range(len(self.problem_set))
+
+        if problem_id is not None:
+            self.problem_set = self.problem_set[self.problem_set["problem_id"] == problem_id]
+            if self.problem_set.empty:
+                raise ValueError(f"No problem found with problem_id={problem_id}")
+
         self.problem_set = self.problem_set.sample(
             frac=1,
             random_state=42,
         ).reset_index(drop=True)
+
+        if limit is not None:
+            if limit < 1:
+                raise ValueError("--limit must be a positive integer")
+            self.problem_set = self.problem_set.head(limit).reset_index(drop=True)
+
         self.index = 0
 
     def get_next_problem(self):
