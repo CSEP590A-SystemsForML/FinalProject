@@ -103,6 +103,18 @@ class SolveResponse(BaseModel):
     error: str | None = None
 
 
+class ModelCallResult(BaseModel):
+    """
+    Structured result from one external model call.
+    """
+
+    text: str = ""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    model_id: str
+    error: str | None = None
+
+
 class CompletionConfig(BaseModel):
     prompt_tokens: int
     completion_tokens: int
