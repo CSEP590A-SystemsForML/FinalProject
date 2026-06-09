@@ -38,6 +38,9 @@ CREATE TABLE IF NOT EXISTS problem_solving (
     prompt_tokens INTEGER DEFAULT 0,
     completion_tokens INTEGER DEFAULT 0,
     total_cost FLOAT DEFAULT 0,
+    final_answer TEXT,
+    web_context_original_chars INTEGER DEFAULT 0,
+    web_context_sent_chars INTEGER DEFAULT 0,
     error TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

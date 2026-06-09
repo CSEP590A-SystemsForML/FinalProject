@@ -10,7 +10,8 @@ except ModuleNotFoundError:
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "metrics.db"
-OUTPUT_IMAGE = BASE_DIR / "cost_by_optimizations.png"
+OUTPUT_DIR = BASE_DIR / "outputs"
+OUTPUT_IMAGE = OUTPUT_DIR / "cost_by_optimizations.png"
 
 OPTIMIZATION_COLS = [
     "baseline",
@@ -37,6 +38,13 @@ def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
     return row is not None
 
 
+def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    if not _table_exists(conn, table_name):
+        return set()
+    rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    return {row[1] for row in rows}
+
+
 def _read_sql_or_empty(conn: sqlite3.Connection, query: str) -> pd.DataFrame:
     try:
         return pd.read_sql_query(query, conn)
@@ -57,7 +65,14 @@ def run_summary(conn: sqlite3.Connection) -> pd.DataFrame:
     if not _table_exists(conn, "problem_solving"):
         return pd.DataFrame()
 
-    query = """
+    columns = _table_columns(conn, "problem_solving")
+    web_context_select = ""
+    if {"web_context_original_chars", "web_context_sent_chars"}.issubset(columns):
+        web_context_select = """,
+        COALESCE(SUM(web_context_original_chars), 0) AS web_context_original_chars,
+        COALESCE(SUM(web_context_sent_chars), 0) AS web_context_sent_chars"""
+
+    query = f"""
     SELECT
         run_id,
         COUNT(*) AS total_problems,
@@ -68,6 +83,7 @@ def run_summary(conn: sqlite3.Connection) -> pd.DataFrame:
         SUM(CASE WHEN escalated THEN 1 ELSE 0 END) AS escalations,
         SUM(prompt_tokens) AS prompt_tokens,
         SUM(completion_tokens) AS completion_tokens
+        {web_context_select}
     FROM problem_solving
     GROUP BY run_id
     ORDER BY run_id
@@ -81,6 +97,21 @@ def run_summary(conn: sqlite3.Connection) -> pd.DataFrame:
         lambda row: row["total_cost"] / row["solved_problems"] if row["solved_problems"] else None,
         axis=1,
     )
+    if "web_context_original_chars" not in df.columns:
+        df["web_context_original_chars"] = 0
+    if "web_context_sent_chars" not in df.columns:
+        df["web_context_sent_chars"] = 0
+
+    if "web_context_original_chars" in df.columns and "web_context_sent_chars" in df.columns:
+        df["web_context_chars_saved"] = (
+            df["web_context_original_chars"] - df["web_context_sent_chars"]
+        )
+        df["web_context_compression_ratio"] = df.apply(
+            lambda row: row["web_context_sent_chars"] / row["web_context_original_chars"]
+            if row["web_context_original_chars"]
+            else None,
+            axis=1,
+        )
     return df
 
 
@@ -100,6 +131,92 @@ def run_summary_with_optimizations(conn: sqlite3.Connection) -> pd.DataFrame:
         axis=1,
     )
     return df
+
+
+def baseline_comparison(conn: sqlite3.Connection) -> pd.DataFrame:
+    """
+    Compare each run against the baseline run.
+
+    Baseline selection:
+    1. Prefer a run with optimizations.baseline set.
+    2. Fall back to the first run_id containing "baseline".
+    3. Fall back to the first run in sorted summary order.
+    """
+
+    df = run_summary_with_optimizations(conn)
+    if df.empty:
+        return df
+
+    baseline_candidates = pd.DataFrame()
+    if "baseline" in df.columns:
+        baseline_candidates = df[df["baseline"].fillna(False).astype(bool)]
+
+    if baseline_candidates.empty:
+        baseline_candidates = df[df["run_id"].astype(str).str.contains("baseline", case=False, na=False)]
+
+    baseline = baseline_candidates.iloc[0] if not baseline_candidates.empty else df.iloc[0]
+
+    comparison = df.copy()
+    comparison["baseline_run_id"] = baseline["run_id"]
+
+    metrics = [
+        "total_cost",
+        "solve_rate",
+        "cost_per_solved",
+        "total_attempts",
+        "avg_attempts",
+        "escalations",
+        "prompt_tokens",
+        "completion_tokens",
+        "web_context_original_chars",
+        "web_context_sent_chars",
+        "web_context_chars_saved",
+        "web_context_compression_ratio",
+    ]
+
+    for metric in metrics:
+        if metric not in comparison.columns:
+            continue
+        baseline_value = baseline.get(metric)
+        comparison[f"{metric}_baseline"] = baseline_value
+        comparison[f"{metric}_delta"] = comparison[metric] - baseline_value
+        if baseline_value not in (0, None) and pd.notna(baseline_value):
+            comparison[f"{metric}_pct_delta"] = comparison[f"{metric}_delta"] / baseline_value
+        else:
+            comparison[f"{metric}_pct_delta"] = None
+
+    preferred_columns = [
+        "run_id",
+        "run_label",
+        "active_optimizations",
+        "baseline_run_id",
+        "total_problems",
+        "solved_problems",
+        "solve_rate",
+        "solve_rate_delta",
+        "total_cost",
+        "total_cost_delta",
+        "total_cost_pct_delta",
+        "cost_per_solved",
+        "cost_per_solved_delta",
+        "avg_attempts",
+        "avg_attempts_delta",
+        "escalations",
+        "escalations_delta",
+        "prompt_tokens",
+        "prompt_tokens_delta",
+        "completion_tokens",
+        "completion_tokens_delta",
+        "web_context_original_chars",
+        "web_context_original_chars_delta",
+        "web_context_sent_chars",
+        "web_context_sent_chars_delta",
+        "web_context_chars_saved",
+        "web_context_chars_saved_delta",
+        "web_context_compression_ratio",
+        "web_context_compression_ratio_delta",
+    ]
+    return comparison[[col for col in preferred_columns if col in comparison.columns]]
 
 
 def model_usage_summary(conn: sqlite3.Connection) -> pd.DataFrame:
@@ -284,6 +401,33 @@ def determine_outliers(conn: sqlite3.Connection | None = None) -> pd.DataFrame:
             conn.close()
 
 
+def save_analysis_tables(conn: sqlite3.Connection, output_dir: Path = OUTPUT_DIR) -> dict[str, Path]:
+    """
+    Save paper-ready CSV tables for the current metrics database.
+    """
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    tables = {
+        "run_summary": run_summary_with_optimizations(conn),
+        "baseline_comparison": baseline_comparison(conn),
+        "model_usage": model_usage_summary(conn),
+        "cost_by_difficulty": cost_by_difficulty(conn),
+        "most_expensive_problems": most_expensive_problems(conn),
+        "routing_outliers": determine_outliers(conn),
+    }
+
+    saved_paths: dict[str, Path] = {}
+    for name, df in tables.items():
+        if df.empty:
+            continue
+        path = output_dir / f"{name}.csv"
+        df.to_csv(path, index=False)
+        saved_paths[name] = path
+
+    return saved_paths
+
+
 def print_compact_report() -> None:
     if not DB_PATH.exists():
         print("No metrics DB found.")
@@ -293,6 +437,7 @@ def print_compact_report() -> None:
     try:
         sections = [
             ("RUN SUMMARY", run_summary_with_optimizations(conn)),
+            ("BASELINE COMPARISON", baseline_comparison(conn)),
             ("MODEL USAGE", model_usage_summary(conn)),
             ("COST BY DIFFICULTY", cost_by_difficulty(conn)),
             ("MOST EXPENSIVE PROBLEMS", most_expensive_problems(conn)),
@@ -306,6 +451,9 @@ def print_compact_report() -> None:
             else:
                 print(df.to_string(index=False))
 
+        saved_paths = save_analysis_tables(conn)
+        if saved_paths:
+            print(f"\nSaved analysis tables to {OUTPUT_DIR}")
         calculate_costs_and_plot(conn)
     finally:
         conn.close()

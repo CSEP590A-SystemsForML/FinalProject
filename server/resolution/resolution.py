@@ -18,7 +18,7 @@ def _optimization_enabled(run_optimizations: dict | None, key: str) -> bool:
 async def prepare_tool_context(
     solve_request: SolveRequest,
     run_optimizations: dict | None = None,
-) -> tuple[str, list[str]]:
+) -> tuple[str, list[str], dict[str, int]]:
     """
     Deterministic MVP tool use.
 
@@ -29,17 +29,25 @@ async def prepare_tool_context(
 
     tool_invocations = []
     context_parts = []
+    metadata = {
+        "web_context_original_chars": 0,
+        "web_context_sent_chars": 0,
+    }
 
     if solve_request.category == "web" and solve_request.source_url:
         result = await web_search_tool(solve_request.source_url)
         tool_invocations.append(result.name)
         if result.ok:
-            web_context = result.output
+            original_web_context = result.output
+            web_context = original_web_context
             if _optimization_enabled(run_optimizations, "web_search_compression"):
                 web_context = compress_web_search(web_context)
+            sent_web_context = truncate_web_context(web_context)
+            metadata["web_context_original_chars"] += len(original_web_context)
+            metadata["web_context_sent_chars"] += len(sent_web_context)
             context_parts.append(
                 "Fetched web context:\n"
-                f"{truncate_web_context(web_context)}"
+                f"{sent_web_context}"
             )
         else:
             context_parts.append(
@@ -47,7 +55,7 @@ async def prepare_tool_context(
                 f"{result.error or 'unknown error'}"
             )
 
-    return "\n\n".join(context_parts), tool_invocations
+    return "\n\n".join(context_parts), tool_invocations, metadata
 
 
 def build_solver_messages(
@@ -149,7 +157,7 @@ async def solve_problem(
     escalated = False
     final_model_id = solve_request.model_id
 
-    tool_context, tool_invocations = await prepare_tool_context(solve_request, run_optimizations)
+    tool_context, tool_invocations, tool_metadata = await prepare_tool_context(solve_request, run_optimizations)
     messages = build_solver_messages(solve_request, tool_context, run_optimizations)
 
     for _ in range(solve_request.max_attempts):
@@ -202,6 +210,8 @@ async def solve_problem(
         prompt_tokens=total_prompt_tokens,
         completion_tokens=total_completion_tokens,
         total_cost=total_cost,
+        web_context_original_chars=tool_metadata["web_context_original_chars"],
+        web_context_sent_chars=tool_metadata["web_context_sent_chars"],
         escalated=escalated,
         error=error,
     )

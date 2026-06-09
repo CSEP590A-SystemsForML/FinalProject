@@ -15,6 +15,26 @@ def get_db_path() -> Path:
     return base_dir / "metrics" / "metrics.db"
 
 
+def _ensure_problem_solving_columns(conn: sqlite3.Connection) -> None:
+    """
+    Apply tiny MVP-safe schema migrations for existing local metrics DBs.
+    """
+
+    rows = conn.execute("PRAGMA table_info(problem_solving)").fetchall()
+    existing_columns = {row[1] for row in rows}
+
+    if "final_answer" not in existing_columns:
+        conn.execute("ALTER TABLE problem_solving ADD COLUMN final_answer TEXT")
+    if "web_context_original_chars" not in existing_columns:
+        conn.execute(
+            "ALTER TABLE problem_solving ADD COLUMN web_context_original_chars INTEGER DEFAULT 0"
+        )
+    if "web_context_sent_chars" not in existing_columns:
+        conn.execute(
+            "ALTER TABLE problem_solving ADD COLUMN web_context_sent_chars INTEGER DEFAULT 0"
+        )
+
+
 def initialize_db() -> None:
     base_dir = Path(__file__).resolve().parent
     db_path = get_db_path()
@@ -27,6 +47,7 @@ def initialize_db() -> None:
         with open(schema_path, "r") as f:
             schema_sql = f.read()
         conn.executescript(schema_sql)
+        _ensure_problem_solving_columns(conn)
         conn.commit()
     finally:
         conn.close()
@@ -89,9 +110,12 @@ def log_problem_solving_result(solve_response: SolveResponse) -> None:
                 prompt_tokens,
                 completion_tokens,
                 total_cost,
+                final_answer,
+                web_context_original_chars,
+                web_context_sent_chars,
                 error
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 solve_response.run_id,
@@ -105,6 +129,9 @@ def log_problem_solving_result(solve_response: SolveResponse) -> None:
                 solve_response.prompt_tokens,
                 solve_response.completion_tokens,
                 solve_response.total_cost,
+                solve_response.final_answer,
+                solve_response.web_context_original_chars,
+                solve_response.web_context_sent_chars,
                 solve_response.error,
             ),
         )
@@ -196,6 +223,8 @@ async def solve(solve_request: SolveRequest) -> SolveResponse:
             prompt_tokens=0,
             completion_tokens=0,
             total_cost=0.0,
+            web_context_original_chars=0,
+            web_context_sent_chars=0,
             escalated=False,
             error="Solve failed before completion.",
         )
@@ -242,6 +271,8 @@ async def local_solve(local_request: LocalSolveRequest) -> SolveResponse:
         prompt_tokens=0,
         completion_tokens=0,
         total_cost=0.0,
+        web_context_original_chars=0,
+        web_context_sent_chars=0,
         escalated=False,
         error=None,
     )

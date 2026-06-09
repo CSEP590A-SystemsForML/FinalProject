@@ -120,6 +120,8 @@ class SolveResponse(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_cost: float = 0.0
+    web_context_original_chars: int = 0
+    web_context_sent_chars: int = 0
     escalated: bool = False
     error: str | None = None
 
