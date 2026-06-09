@@ -335,6 +335,7 @@ def calculate_costs_and_plot(conn: sqlite3.Connection | None = None) -> pd.DataF
         plt.xticks(rotation=45, ha="right")
         plt.grid(axis="y", linestyle="--", alpha=0.7)
         plt.tight_layout()
+        OUTPUT_IMAGE.parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(OUTPUT_IMAGE, dpi=300)
         plt.close()
         print(f"Cost plot saved to {OUTPUT_IMAGE}")
