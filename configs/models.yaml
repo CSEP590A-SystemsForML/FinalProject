@@ -22,15 +22,6 @@
   total_params: 117
   active_params: 5.1
 
-"deepseek/deepseek-v4-flash:free":
-  source: OpenRouter 
-  source_url: https://openrouter.ai/
-  description: > 
-    Very, very expensive and very competent. The reasoning and coding abilities of this model are 
-    an entry level worker when it comes to logic and reasoning.
-  total_params: 284
-  active_params: 13
-
 "moonshotai/kimi-k2.6:free":
   source: OpenRouter 
   source_url: https://openrouter.ai/

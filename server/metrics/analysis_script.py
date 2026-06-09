@@ -104,7 +104,7 @@ def determine_outliers():
     """
     Function 2: Determines outliers/routing problems based on specific rules:
     - If a problem has been labeled as anything other than "easy" and goes to gpt-oss-20b that's a problem.
-    - If it is a medium and doesn't go to oss 120b or deepseek v4 flash, that's a problem.
+    - If it is a medium and doesn't go to gpt-oss-120b, that's a problem.
     - If a problem that is hard goes to gpt oss 20b or 120b, that's a problem.
     - If a very hard goes to any model other than kimi k2.6 that's also a problem.
     """
@@ -135,10 +135,10 @@ def determine_outliers():
                 is_outlier = True
                 reason = "Non-easy problem routed to gpt-oss-20b"
                 
-            # 2. Medium problem must go to oss 120b or deepseek v4 flash
-            elif diff_clean == "medium" and not ("gpt-oss-120b" in model_clean or "deepseek-v4-flash" in model_clean):
+            # 2. Medium problem must go to gpt-oss-120b
+            elif diff_clean == "medium" and "gpt-oss-120b" not in model_clean:
                 is_outlier = True
-                reason = "Medium problem not routed to gpt-oss-120b or deepseek-v4-flash"
+                reason = "Medium problem not routed to gpt-oss-120b"
                 
             # 3. Hard problem going to gpt-oss-20b or 120b is a problem
             elif diff_clean == "hard" and ("gpt-oss-20b" in model_clean or "gpt-oss-120b" in model_clean):

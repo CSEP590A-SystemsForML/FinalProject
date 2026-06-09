@@ -1,8 +1,10 @@
 import sqlite3
 from pathlib import Path
-from interfaces import SolveRequest
+from .interfaces import SolveRequest
 from fastapi import FastAPI
+from dotenv import load_dotenv
 
+load_dotenv()
 app = FastAPI()
 
 @app.on_event("startup")

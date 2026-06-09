@@ -3,8 +3,15 @@ from typing import Literal
 import yaml
 from pathlib import Path
 import asyncio
+import sys
 import pandas as pd
 import re
+
+# Make `server.*` imports work when running this file directly from the
+# local-inference/ subdir.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from server.solver import SolveResult, solve_with_escalation  # noqa: E402
 
 class ProblemSetManager:
     """
@@ -146,17 +153,43 @@ class LogicManager:
             {"role": "system", "content": self.router_prompt},
             {"role": "user", "content": str(request["problem"])},
         ]
-        first_res, second_res = await self.inference_manager.call_model(prompt)
+        try:
+            first_res, second_res = await self.inference_manager.call_model(prompt)
+            print(
+                f"[router] problem={request.get('id','?')} "
+                f"first={first_res!r} revised={second_res!r}"
+            )
+        except Exception as e:  # noqa: BLE001
+            # Router is advisory only - if vLLM is down we still want the
+            # solver to run and exercise the OpenRouter rungs.
+            print(f"[router] vLLM router unavailable: {e}")
+
+        # Hand the actual solving off to the escalation engine. The router's
+        # model_id is currently advisory; the solver starts from the local
+        # vLLM and walks the default ladder.
+        result: SolveResult = await solve_with_escalation(request)
+        self._print_solve_summary(request, result)
+        return result
+
+    def _print_solve_summary(self, request, result: "SolveResult") -> None:
+        print("=" * 60)
         print(
-            f"For problem: {request['problem']}\n"
-            f"First response: {first_res}\n"
-            f"Revised response: {second_res}\n"
+            f"Problem {result.problem_id} ({request.get('difficulty','?')}): "
+            f"{'SUCCESS' if result.success else 'FAILED'} via {result.final_model_id}"
         )
-        #self.simple_routing_logger(request, model_id, reasoning)
-        # TODO: Add validation logic here to fuzzy match to a model to be safe?.
-        # TODO: Add calling fastapi server with request data and model_id
-        # TODO: Add actual heurisitc logging.
-        return
+        if result.escalated:
+            chain = " -> ".join(a.model_id for a in result.attempts)
+            print(f"  escalation chain: {chain}")
+        for a in result.attempts:
+            tag = "OK  " if a.success else "MISS"
+            err = f" err={a.error}" if a.error else ""
+            print(
+                f"  [{tag}] {a.model_id:<32} "
+                f"in={a.prompt_tokens:>4} out={a.completion_tokens:>4} "
+                f"cost=${a.cost:.6f}{err}"
+            )
+        print(f"  total cost: ${result.total_cost:.6f}")
+        print("=" * 60)
 
     async def handle_solution(self, request):
         raise NotImplemented("Local model cannot handle solutions yet.")

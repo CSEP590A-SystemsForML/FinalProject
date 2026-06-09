@@ -2,7 +2,7 @@
 
 set -e
 
-PYTHON=${PYTHON:-python}
+PYTHON=${PYTHON:-python3.12}
 
 # Verify Python 3.12
 if ! $PYTHON -c "import sys; assert sys.version_info[:2] == (3, 12)"; then

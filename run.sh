@@ -5,50 +5,29 @@ set -e
 if [[ "$1" == "--help" || "$1" == "-h" ]]; then
     cat << EOF
 Usage:
-  ./serve.sh
+  ./run.sh
 
 Environment Variables:
-  MODEL          Hugging Face model name
-                 Default: ibm-granite/granite-4.1-3b
-
-  DTYPE          Quantization mode
-                 Values: bf16, fp8
+  MODEL          HF model name (must be a JAX-native arch on TPU).
+                 Default: Qwen/Qwen3-4B
+  DTYPE          bf16 | fp8   (fp8 is GPU-only; ignored on TPU)
                  Default: bf16
-
-  MAX_NUM_SEQS   Maximum concurrent sequences
-                 Default:
-                   bf16 -> 8
-                   fp8  -> 16
-
-Examples:
-  ./serve.sh
-
-  ./serve.sh DTYPE=fp8
-
-  ./serve.sh MODEL=ibm-granite/granite-4.1-3b
-
-  ./serve.sh DTYPE=fp8 MAX_NUM_SEQS=32
+  MAX_NUM_SEQS   Max concurrent sequences.
+                 Default: 8
 
 Fixed Configuration:
   Port:                     8000
   Max Model Length:         8192
-  GPU Memory Utilization:   0.95
-  Swap Space:               8 GB
   Tensor Parallel Size:     1
   Prefix Caching:           Enabled
   Trust Remote Code:        Enabled
-  Request Logging:          Disabled
-  KV Cache DType:           FP8
 EOF
     exit 0
 fi
 
-MODEL="${MODEL:-ibm-granite/granite-4.1-3b}"
-
-# Supported values: bf16, fp8
+MODEL="${MODEL:-Qwen/Qwen3-4B}"
 DTYPE="${DTYPE:-bf16}"
 
-# Dynamic defaults based on dtype
 if [ -z "${MAX_NUM_SEQS:-}" ]; then
     if [ "$DTYPE" = "fp8" ]; then
         MAX_NUM_SEQS=16
@@ -63,49 +42,40 @@ CMD=(
     --port 8000
     --download-dir /tmp
     --max-model-len 8192
-    --gpu-memory-utilization 0.95
-    --swap-space 8
     --tensor-parallel-size 1
     --enable-prefix-caching
     --max-num-seqs "$MAX_NUM_SEQS"
     --trust-remote-code
-    --disable-log-requests
-    --kv-cache-dtype fp8
     --reasoning-parser qwen3
+    --dtype bfloat16
 )
+[ "$DTYPE" = "fp8" ] && CMD+=(--quantization fp8)
 
-if [ "$DTYPE" = "fp8" ]; then
-    CMD+=(
-        --dtype bfloat16
-        --quantization fp8
-    )
-else
-    CMD+=(
-        --dtype bfloat16
-    )
-fi
-
-"${CMD[@]}" &
+# Run vLLM in its own process group so we can kill all descendants at once.
+setsid "${CMD[@]}" &
 VLLM_PID=$!
 
-# Start FastAPI
-python3.12 -m uvicorn server.server:app \
-    --host 0.0.0.0 \
-    --port 8001 &
+python3.12 -m uvicorn server.server:app --host 0.0.0.0 --port 8001 &
 FASTAPI_PID=$!
 
-# Start FastMCP
-python3.12 -m uvicorn tool-sever.server:mcp \
-    --host 0.0.0.0 \
-    --port 8002 &
+python3.12 -m uvicorn tool-server.server:mcp --host 0.0.0.0 --port 8002 &
 FASTMCP_PID=$!
 
 echo "Started services:"
-echo "  vLLM     : http://localhost:8000"
+echo "  vLLM     : http://localhost:8000 (pgid=$VLLM_PID)"
 echo "  FastAPI  : http://localhost:8001"
 echo "  FastMCP  : http://localhost:8002"
 
-# Cleanup on Ctrl+C
-trap 'kill $VLLM_PID $FASTAPI_PID $FASTMCP_PID' SIGINT SIGTERM
+cleanup() {
+    echo
+    echo "Shutting down (releasing TPU)..."
+    # Kill vLLM's whole process group (EngineCore + APIServer children)
+    kill -TERM -"$VLLM_PID" 2>/dev/null || true
+    kill -TERM "$FASTAPI_PID" "$FASTMCP_PID" 2>/dev/null || true
+    # Give EngineCore a moment to release libtpu.so, then SIGKILL stragglers
+    sleep 3
+    kill -KILL -"$VLLM_PID" 2>/dev/null || true
+}
+trap cleanup INT TERM EXIT
 
 wait

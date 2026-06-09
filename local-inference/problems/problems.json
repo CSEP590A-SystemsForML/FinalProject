@@ -1,44 +1,83 @@
 [
     {
-        "problem": "What is 2+2?",
+        "id": 0,
+        "problem": "What is 2+2? Respond with only the number.",
         "answer": "4",
+        "verify": "match",
+        "difficulty": "very_easy"
+    },
+    {
+        "id": 1,
+        "problem": "What color is the sky on a clear day? Respond with one word.",
+        "answer": "blue",
+        "verify": "match",
+        "difficulty": "very_easy"
+    },
+    {
+        "id": 2,
+        "problem": "What is the capital of France? Respond with one word.",
+        "answer": "Paris",
+        "verify": "match",
+        "difficulty": "very_easy"
+    },
+    {
+        "id": 3,
+        "problem": "What is 17 * 23? Respond with only the number.",
+        "answer": "391",
         "verify": "match",
         "difficulty": "easy"
     },
     {
-        "problem": "Write a FlashAttention CUDA kernel that modifies the PTX code to avoid having to write back to SMEM between the QK^T operation and multiplying by V on the tensor cores",
-        "answer": "4",
-        "verify": "tests",
-        "difficulty": "hard"
-    },
-    {
-        "problem": "What color is the sky on a clear day?",
-        "answer": "b",
-        "verify": "m",
-        "difficulty": "very_easy"
-    },
-    {
-        "problem": "What was the capital of Rome in 496 AD?",
-        "answer": "p",
-        "verify": "m",
+        "id": 4,
+        "problem": "Write a Python function `rotate90(matrix)` that rotates a 2D list 90 degrees clockwise. Return only the code inside a single fenced python block.",
+        "answer": "code",
+        "verify": "code_tests",
+        "tests": [
+            "assert rotate90([[1,2],[3,4]]) == [[3,1],[4,2]]",
+            "assert rotate90([[1]]) == [[1]]",
+            "assert rotate90([[1,2,3],[4,5,6],[7,8,9]]) == [[7,4,1],[8,5,2],[9,6,3]]"
+        ],
         "difficulty": "easy"
     },
     {
-        "problem": "Explain the benefits of smart pointers",
-        "answer": "p",
-        "verify": "h",
+        "id": 5,
+        "problem": "Write a Python function `is_prime(n: int) -> bool` that returns True iff n is a prime number. Return only the code inside a single fenced python block.",
+        "answer": "code",
+        "verify": "code_tests",
+        "tests": [
+            "assert is_prime(2) is True",
+            "assert is_prime(17) is True",
+            "assert is_prime(1) is False",
+            "assert is_prime(15) is False",
+            "assert is_prime(7919) is True"
+        ],
+        "difficulty": "easy"
+    },
+    {
+        "id": 6,
+        "problem": "Explain in 2-3 sentences why std::unique_ptr is preferred over a raw pointer in modern C++.",
+        "answer": "Should mention exclusive ownership, automatic deletion / RAII, and zero overhead vs raw pointer.",
+        "verify": "model_judge",
         "difficulty": "medium"
     },
     {
-        "problem": "Explain how a spin lock is implemented in C under the hood. Implement a functional version of this.",
-        "answer": "c",
-        "verify": "t",
-        "difficulty": "hard"
+        "id": 7,
+        "problem": "Write a Python function `longest_palindrome(s: str) -> str` that returns the longest palindromic substring of s. Return only the code inside a single fenced python block.",
+        "answer": "code",
+        "verify": "code_tests",
+        "tests": [
+            "r = longest_palindrome('babad'); assert r in ('bab','aba')",
+            "assert longest_palindrome('cbbd') == 'bb'",
+            "assert longest_palindrome('a') == 'a'",
+            "assert longest_palindrome('') == ''"
+        ],
+        "difficulty": "medium"
     },
     {
-        "problem": "Write a function that rotates a 2D array 90 degrees in Python.",
-        "answer": "c",
-        "verify": "t",
-        "difficulty": "easy"
+        "id": 8,
+        "problem": "Output ONLY the SHA-256 hex digest of the ASCII string 'hello'. No other text. No code fences. No prose. Just the 64-character lowercase hex string and nothing else.",
+        "answer": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+        "verify": "match",
+        "difficulty": "medium"
     }
 ]
