@@ -45,8 +45,8 @@ def model_judge(question: str, model_answer: str, correct_answer: str) -> bool:
     model_id = "openai/gpt-oss-120b:free"
     response = query_model(model_id, prompt)
 
-    if not response:
+    if response.error or not response.text:
         return False
 
-    res_clean = str(response).strip().lower().strip(" .!,;:")
+    res_clean = response.text.strip().lower().strip(" .!,;:")
     return "yes" in res_clean or "true" in res_clean

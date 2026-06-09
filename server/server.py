@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi import FastAPI
 
 from server.interfaces import SolveRequest, SolveResponse
+from server.resolution.resolution import solve_problem
 
 app = FastAPI()
 
@@ -32,11 +33,10 @@ def initialize_db() -> None:
 
 def log_routing_decision(solve_request: SolveRequest) -> None:
     """
-    Phase 1 MVP metric logging.
+    Server-owned routing metric logging.
 
-    All metrics collection happens in the server. local-inference sends run_id,
-    problem data, router-selected model_id, and router reasoning; the server
-    records the routing metric here.
+    local-inference sends run_id, problem data, router-selected model_id, and
+    router reasoning; the server records the routing metric here.
     """
 
     conn = sqlite3.connect(get_db_path())
@@ -60,6 +60,51 @@ def log_routing_decision(solve_request: SolveRequest) -> None:
                 solve_request.difficulty,
                 solve_request.category,
                 solve_request.router_reasoning,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def log_problem_solving_result(solve_response: SolveResponse) -> None:
+    """
+    Server-owned problem-solving metric logging.
+    """
+
+    conn = sqlite3.connect(get_db_path())
+    try:
+        conn.execute(
+            """
+            INSERT INTO problem_solving (
+                run_id,
+                problem_id,
+                attempts,
+                num_tool_calls,
+                tool_invocations,
+                model_id,
+                solved,
+                escalated,
+                prompt_tokens,
+                completion_tokens,
+                total_cost,
+                error
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                solve_response.run_id,
+                solve_response.problem_id,
+                solve_response.attempts,
+                solve_response.num_tool_calls,
+                ",".join(solve_response.tool_invocations),
+                solve_response.model_id,
+                solve_response.solved,
+                solve_response.escalated,
+                solve_response.prompt_tokens,
+                solve_response.completion_tokens,
+                solve_response.total_cost,
+                solve_response.error,
             ),
         )
         conn.commit()
@@ -95,32 +140,16 @@ def on_startup():
 @app.post("/solve", response_model=SolveResponse)
 async def solve(solve_request: SolveRequest) -> SolveResponse:
     """
-    Accepts a routed problem from local-inference.
-
-    Phase 1 establishes the server contract and centralizes metric ownership.
-    The actual resolution loop will be implemented in the next phase. For now,
-    the server records the routing decision and returns a shaped placeholder
-    response.
+    Accepts a routed problem from local-inference, resolves it, and records
+    server-owned metrics.
     """
 
     log_routing_decision(solve_request)
     _run_optimizations = get_run_optimizations(solve_request.run_id)
 
-    return SolveResponse(
-        run_id=solve_request.run_id,
-        problem_id=solve_request.problem_id,
-        model_id=solve_request.model_id,
-        solved=False,
-        attempts=0,
-        final_answer=None,
-        num_tool_calls=0,
-        tool_invocations=[],
-        prompt_tokens=0,
-        completion_tokens=0,
-        total_cost=0.0,
-        escalated=False,
-        error="Resolution loop not implemented yet.",
-    )
+    solve_response = await solve_problem(solve_request)
+    log_problem_solving_result(solve_response)
+    return solve_response
 
 
 @app.get("/complete")
@@ -128,8 +157,8 @@ async def complete():
     """
     Returns if all tasks submitted to the server have been resolved.
 
-    Phase 1 placeholder: /solve is synchronous for the MVP contract, so there
-    are no background tasks yet.
+    MVP note: /solve is synchronous from the caller's perspective, so there are
+    no background tasks yet.
     """
 
     return {"complete": True}
@@ -138,18 +167,53 @@ async def complete():
 @app.get("/metrics")
 async def metrics():
     """
-    Returns basic MVP metric counts from the server-owned SQLite database.
+    Returns basic MVP metric aggregates from the server-owned SQLite database.
     """
 
     conn = sqlite3.connect(get_db_path())
+    conn.row_factory = sqlite3.Row
     try:
         routing_count = conn.execute("SELECT COUNT(*) FROM routing").fetchone()[0]
         problem_solving_count = conn.execute("SELECT COUNT(*) FROM problem_solving").fetchone()[0]
         optimization_runs = conn.execute("SELECT COUNT(*) FROM optimizations").fetchone()[0]
+
+        summary = conn.execute(
+            """
+            SELECT
+                COALESCE(SUM(CASE WHEN solved THEN 1 ELSE 0 END), 0) AS solved_problems,
+                COALESCE(SUM(total_cost), 0) AS total_cost,
+                COALESCE(SUM(attempts), 0) AS total_attempts,
+                COALESCE(SUM(CASE WHEN escalated THEN 1 ELSE 0 END), 0) AS escalations,
+                COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                COALESCE(SUM(completion_tokens), 0) AS completion_tokens
+            FROM problem_solving
+            """
+        ).fetchone()
+
+        model_rows = conn.execute(
+            """
+            SELECT model_id, COUNT(*) AS count
+            FROM problem_solving
+            GROUP BY model_id
+            ORDER BY count DESC
+            """
+        ).fetchall()
+
+        solved_problems = summary["solved_problems"]
+        solve_rate = solved_problems / problem_solving_count if problem_solving_count else 0
+
         return {
             "routing_count": routing_count,
             "problem_solving_count": problem_solving_count,
             "optimization_runs": optimization_runs,
+            "solved_problems": solved_problems,
+            "solve_rate": solve_rate,
+            "total_cost": summary["total_cost"],
+            "total_attempts": summary["total_attempts"],
+            "escalations": summary["escalations"],
+            "prompt_tokens": summary["prompt_tokens"],
+            "completion_tokens": summary["completion_tokens"],
+            "model_usage": {row["model_id"]: row["count"] for row in model_rows},
         }
     finally:
         conn.close()
