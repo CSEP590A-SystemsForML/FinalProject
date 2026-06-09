@@ -2,6 +2,7 @@ import sqlite3
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
 from server.interfaces import LocalSolveRequest, SolveRequest, SolveResponse
 from server.resolution.resolution import solve_problem
@@ -118,6 +119,9 @@ def get_run_optimizations(run_id: str) -> dict | None:
 
     The optimizations table is intentionally populated before a run starts, so
     this row is the server-side source of truth for what each run_id means.
+
+    If no row exists, return None. The resolution layer treats None as all
+    optimizations disabled, which is the safe baseline behavior for MVP runs.
     """
 
     conn = sqlite3.connect(get_db_path())
@@ -137,19 +141,71 @@ def on_startup():
     initialize_db()
 
 
+@app.get("/health")
+async def health():
+    """
+    Returns service health and verifies SQLite connectivity.
+    """
+
+    try:
+        conn = sqlite3.connect(get_db_path())
+        try:
+            conn.execute("SELECT 1").fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "error",
+                "database": "disconnected",
+                "error": repr(e),
+            },
+        )
+
+    return {"status": "ok", "database": "connected"}
+
+
 @app.post("/solve", response_model=SolveResponse)
 async def solve(solve_request: SolveRequest) -> SolveResponse:
     """
     Accepts a routed problem from local-inference, resolves it, and records
     server-owned metrics.
+
+    MVP behavior: return a valid SolveResponse on internal failure so one bad
+    problem does not crash an entire benchmark run.
     """
 
-    log_routing_decision(solve_request)
-    _run_optimizations = get_run_optimizations(solve_request.run_id)
+    try:
+        log_routing_decision(solve_request)
+        _run_optimizations = get_run_optimizations(solve_request.run_id)
 
-    solve_response = await solve_problem(solve_request, _run_optimizations)
-    log_problem_solving_result(solve_response)
-    return solve_response
+        solve_response = await solve_problem(solve_request, _run_optimizations)
+        log_problem_solving_result(solve_response)
+        return solve_response
+    except Exception:
+        failure_response = SolveResponse(
+            run_id=solve_request.run_id,
+            problem_id=solve_request.problem_id,
+            model_id=solve_request.model_id,
+            solved=False,
+            attempts=0,
+            final_answer=None,
+            num_tool_calls=0,
+            tool_invocations=[],
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_cost=0.0,
+            escalated=False,
+            error="Solve failed before completion.",
+        )
+
+        try:
+            log_problem_solving_result(failure_response)
+        except Exception:
+            pass
+
+        return failure_response
 
 
 @app.post("/local-solve", response_model=SolveResponse)

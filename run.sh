@@ -1,11 +1,11 @@
 #!/bin/bash
 
-set -e
+set -euo pipefail
 
-if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     cat << EOF
 Usage:
-  ./serve.sh
+  ./run.sh
 
 Environment Variables:
   MODEL          Hugging Face model name
@@ -20,17 +20,29 @@ Environment Variables:
                    bf16 -> 8
                    fp8  -> 16
 
+  HOST           Bind host for local services
+                 Default: 127.0.0.1
+                 Set HOST=0.0.0.0 only for Colab/demo environments that require it.
+
+  ROUTER_PORT    vLLM OpenAI-compatible router port
+                 Default: 7654
+
+  API_PORT       FastAPI resolution server port
+                 Default: 8001
+
+  VLLM_BIN       vLLM executable
+                 Default: vllm
+
 Examples:
-  ./serve.sh
+  ./run.sh
 
-  ./serve.sh DTYPE=fp8
+  DTYPE=fp8 ./run.sh
 
-  ./serve.sh MODEL=ibm-granite/granite-4.1-3b
+  MODEL=ibm-granite/granite-4.1-3b ./run.sh
 
-  ./serve.sh DTYPE=fp8 MAX_NUM_SEQS=32
+  DTYPE=fp8 MAX_NUM_SEQS=32 ./run.sh
 
 Fixed Configuration:
-  Port:                     8000
   Max Model Length:         8192
   GPU Memory Utilization:   0.95
   Swap Space:               8 GB
@@ -39,16 +51,29 @@ Fixed Configuration:
   Trust Remote Code:        Enabled
   Request Logging:          Disabled
   KV Cache DType:           FP8
+
+Service URLs with defaults:
+  vLLM router:              http://127.0.0.1:7654/v1
+  FastAPI server:           http://127.0.0.1:8001
+  FastAPI docs:             http://127.0.0.1:8001/docs
+  FastAPI OpenAPI schema:   http://127.0.0.1:8001/openapi.json
+  FastAPI health:           http://127.0.0.1:8001/health
+
+MVP note:
+  The tool server is not started as a standalone service by this script.
+  server/tools.py imports the current tool functions directly.
 EOF
     exit 0
 fi
 
 MODEL="${MODEL:-ibm-granite/granite-4.1-3b}"
-
-# Supported values: bf16, fp8
 DTYPE="${DTYPE:-bf16}"
+HOST="${HOST:-127.0.0.1}"
+ROUTER_PORT="${ROUTER_PORT:-7654}"
+API_PORT="${API_PORT:-8001}"
+VLLM_BIN="${VLLM_BIN:-vllm}"
 
-# Dynamic defaults based on dtype
+# Dynamic defaults based on dtype.
 if [ -z "${MAX_NUM_SEQS:-}" ]; then
     if [ "$DTYPE" = "fp8" ]; then
         MAX_NUM_SEQS=16
@@ -57,10 +82,10 @@ if [ -z "${MAX_NUM_SEQS:-}" ]; then
     fi
 fi
 
-CMD=(
-    ~/.local/bin/vllm serve "$MODEL"
-    --host 0.0.0.0
-    --port 8000
+VLLM_CMD=(
+    "$VLLM_BIN" serve "$MODEL"
+    --host "$HOST"
+    --port "$ROUTER_PORT"
     --download-dir /tmp
     --max-model-len 8192
     --gpu-memory-utilization 0.95
@@ -75,37 +100,38 @@ CMD=(
 )
 
 if [ "$DTYPE" = "fp8" ]; then
-    CMD+=(
+    VLLM_CMD+=(
         --dtype bfloat16
         --quantization fp8
     )
 else
-    CMD+=(
+    VLLM_CMD+=(
         --dtype bfloat16
     )
 fi
 
-"${CMD[@]}" &
+"${VLLM_CMD[@]}" &
 VLLM_PID=$!
 
-# Start FastAPI
 python3.12 -m uvicorn server.server:app \
-    --host 0.0.0.0 \
-    --port 8001 &
+    --host "$HOST" \
+    --port "$API_PORT" &
 FASTAPI_PID=$!
 
-# Start FastMCP
-python3.12 -m uvicorn tool-sever.server:mcp \
-    --host 0.0.0.0 \
-    --port 8002 &
-FASTMCP_PID=$!
+cleanup() {
+    kill "$VLLM_PID" "$FASTAPI_PID" 2>/dev/null || true
+}
+
+trap cleanup EXIT SIGINT SIGTERM
 
 echo "Started services:"
-echo "  vLLM     : http://localhost:8000"
-echo "  FastAPI  : http://localhost:8001"
-echo "  FastMCP  : http://localhost:8002"
-
-# Cleanup on Ctrl+C
-trap 'kill $VLLM_PID $FASTAPI_PID $FASTMCP_PID' SIGINT SIGTERM
+echo "  vLLM router : http://$HOST:$ROUTER_PORT/v1"
+echo "  FastAPI     : http://$HOST:$API_PORT"
+echo "  API docs    : http://$HOST:$API_PORT/docs"
+echo "  OpenAPI     : http://$HOST:$API_PORT/openapi.json"
+echo "  Health      : http://$HOST:$API_PORT/health"
+echo ""
+echo "Run benchmark with:"
+echo "  ROUTER_BASE_URL=http://$HOST:$ROUTER_PORT/v1 python3.12 local-inference/main.py --server-url http://$HOST:$API_PORT"
 
 wait
