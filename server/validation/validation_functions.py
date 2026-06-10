@@ -1,6 +1,45 @@
 import re
 from typing import Any
 
+_NUMBER_RE = re.compile(r"-?\d[\d,]*\.?\d*")
+
+
+def _last_number(text: str) -> float | None:
+    """Extract the last numeric value from text, tolerating commas, $ and %."""
+    if text is None:
+        return None
+    matches = _NUMBER_RE.findall(str(text))
+    if not matches:
+        return None
+    try:
+        return float(matches[-1].replace(",", ""))
+    except ValueError:
+        return None
+
+
+def validate_numeric_match(answer: str, expected: str, *args: Any, **kwargs: Any) -> bool:
+    """
+    Compare the final numeric value in the model answer against the expected
+    number. Robust to surrounding prose, currency symbols, and thousands commas.
+    """
+    got = _last_number(answer)
+    want = _last_number(expected)
+    if got is None or want is None:
+        return False
+    return abs(got - want) < 1e-6
+
+
+def validate_text_equals_ci(answer: str, expected: str, *args: Any, **kwargs: Any) -> bool:
+    """
+    Case-insensitive equality after trimming whitespace and surrounding
+    punctuation. Good for short factual answers (names, symbols, single words).
+    """
+    if not answer or not expected:
+        return False
+    strip_chars = " \t\n.!,;:'\"()"
+    return answer.strip().strip(strip_chars).lower() == expected.strip().strip(strip_chars).lower()
+
+
 def validate_math_problem(answer: str, expected: str, *args: Any, **kwargs: Any) -> bool:
     """
     Validate math problem (ID 0) by checking if the answer matches expected.

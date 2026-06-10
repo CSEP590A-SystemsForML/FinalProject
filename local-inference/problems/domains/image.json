@@ -1,0 +1,57 @@
+[
+  {
+    "problem_id": 3200,
+    "problem": "Which country's national flag is shown in this image? Answer with the country name only.",
+    "answer": "Japan",
+    "verify": "heuristic",
+    "validator": "text_equals_ci",
+    "difficulty": "easy",
+    "category": "image",
+    "image_url": "https://commons.wikimedia.org/wiki/Special:FilePath/Flag_of_Japan.svg",
+    "source": "curated"
+  },
+  {
+    "problem_id": 3201,
+    "problem": "Which country's national flag is shown in this image? Answer with the country name only.",
+    "answer": "France",
+    "verify": "heuristic",
+    "validator": "text_equals_ci",
+    "difficulty": "easy",
+    "category": "image",
+    "image_url": "https://commons.wikimedia.org/wiki/Special:FilePath/Flag_of_France.svg",
+    "source": "curated"
+  },
+  {
+    "problem_id": 3202,
+    "problem": "Which country's national flag is shown in this image? Answer with the country name only.",
+    "answer": "Brazil",
+    "verify": "heuristic",
+    "validator": "text_equals_ci",
+    "difficulty": "medium",
+    "category": "image",
+    "image_url": "https://commons.wikimedia.org/wiki/Special:FilePath/Flag_of_Brazil.svg",
+    "source": "curated"
+  },
+  {
+    "problem_id": 3203,
+    "problem": "Which country's national flag is shown in this image? Answer with the country name only.",
+    "answer": "Italy",
+    "verify": "heuristic",
+    "validator": "text_equals_ci",
+    "difficulty": "easy",
+    "category": "image",
+    "image_url": "https://commons.wikimedia.org/wiki/Special:FilePath/Flag_of_Italy.svg",
+    "source": "curated"
+  },
+  {
+    "problem_id": 3204,
+    "problem": "Which country's national flag is shown in this image? Answer with the country name only.",
+    "answer": "Germany",
+    "verify": "heuristic",
+    "validator": "text_equals_ci",
+    "difficulty": "easy",
+    "category": "image",
+    "image_url": "https://commons.wikimedia.org/wiki/Special:FilePath/Flag_of_Germany.svg",
+    "source": "curated"
+  }
+]

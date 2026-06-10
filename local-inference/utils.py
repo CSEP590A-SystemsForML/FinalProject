@@ -11,17 +11,148 @@ import yaml
 from openai import AsyncOpenAI
 
 
+VALID_VERIFY_MODES = {"match", "tests", "judge", "heuristic"}
+VALID_DIFFICULTIES = {"very_easy", "easy", "medium", "hard", "very_hard"}
+
+
+def validate_problem_set(problem_set: pd.DataFrame) -> None:
+    """
+    Validate the loaded problem set and fail loudly on the FIRST malformed run,
+    listing every offending problem at once.
+
+    Schema (see PROGRESS.md "Locked problem schema"):
+    - problem_id: unique integer
+    - problem: non-empty text
+    - verify: one of match | tests | judge | heuristic
+    - difficulty: one of very_easy | easy | medium | hard | very_hard
+    - category: non-empty string
+    - answer: required when verify is match or judge
+    - assert_cases: required when verify is tests
+    - validator: required when verify is heuristic
+    """
+
+    errors: list[str] = []
+
+    required_columns = {"problem_id", "problem", "verify", "difficulty", "category"}
+    missing_columns = required_columns - set(problem_set.columns)
+    if missing_columns:
+        raise ValueError(
+            f"Problem set is missing required columns: {sorted(missing_columns)}"
+        )
+
+    seen_ids: dict[object, int] = {}
+
+    for position, row in problem_set.iterrows():
+        record = row.to_dict()
+        pid = record.get("problem_id")
+        label = f"problem_id={pid}" if pd.notna(pid) else f"row {position}"
+
+        if pd.isna(pid):
+            errors.append(f"{label}: problem_id is missing.")
+        else:
+            try:
+                pid_int = int(pid)
+            except (TypeError, ValueError):
+                errors.append(f"{label}: problem_id must be an integer.")
+            else:
+                if pid_int in seen_ids:
+                    errors.append(f"{label}: duplicate problem_id (also row {seen_ids[pid_int]}).")
+                seen_ids[pid_int] = position
+
+        problem_text = record.get("problem")
+        if not isinstance(problem_text, str) or not problem_text.strip():
+            errors.append(f"{label}: 'problem' must be non-empty text.")
+
+        verify = str(record.get("verify", "")).strip().lower()
+        if verify not in VALID_VERIFY_MODES:
+            errors.append(
+                f"{label}: verify='{record.get('verify')}' invalid; expected one of {sorted(VALID_VERIFY_MODES)}."
+            )
+
+        difficulty = str(record.get("difficulty", "")).strip().lower()
+        if difficulty not in VALID_DIFFICULTIES:
+            errors.append(
+                f"{label}: difficulty='{record.get('difficulty')}' invalid; expected one of {sorted(VALID_DIFFICULTIES)}."
+            )
+
+        category = record.get("category")
+        if not isinstance(category, str) or not category.strip():
+            errors.append(f"{label}: 'category' must be a non-empty string.")
+
+        def _has(field: str) -> bool:
+            value = record.get(field)
+            return value is not None and not (pd.isna(value) if not isinstance(value, str) else not value.strip())
+
+        if verify in {"match", "judge"} and not _has("answer"):
+            errors.append(f"{label}: verify='{verify}' requires a non-empty 'answer'.")
+        if verify == "tests" and not _has("assert_cases"):
+            errors.append(f"{label}: verify='tests' requires non-empty 'assert_cases'.")
+        if verify == "heuristic" and not _has("validator"):
+            errors.append(
+                f"{label}: verify='heuristic' requires a 'validator' name registered in server/validation/registry.py."
+            )
+
+    if errors:
+        joined = "\n  - ".join(errors)
+        raise ValueError(
+            f"Problem set failed validation ({len(errors)} issue(s)):\n  - {joined}"
+        )
+
+
+def _domains_dir() -> Path:
+    return Path(__file__).resolve().parent / "problems" / "domains"
+
+
+def available_domains() -> list[str]:
+    """Domain names with a built dataset file, sorted for deterministic loading."""
+    return sorted(p.stem for p in _domains_dir().glob("*.json"))
+
+
+def load_domain_problems(domain: str | None) -> pd.DataFrame:
+    """
+    Load problems for one domain, or all domains concatenated when domain is None.
+
+    Domain datasets are built by problems/build.py into problems/domains/<domain>.json.
+    """
+    domains_dir = _domains_dir()
+    all_domains = available_domains()
+    if not all_domains:
+        raise FileNotFoundError(
+            f"No domain datasets found in {domains_dir}. Run: python {domains_dir.parent}/build.py"
+        )
+
+    if domain is None:
+        selected = all_domains
+    else:
+        if domain not in all_domains:
+            raise ValueError(
+                f"Unknown domain '{domain}'. Available: {all_domains}"
+            )
+        selected = [domain]
+
+    frames = [pd.read_json(domains_dir / f"{name}.json") for name in selected]
+    return pd.concat(frames, ignore_index=True)
+
+
 class ProblemSetManager:
     """
     Class for managing the dataset of problems to solve and handing off the next problem when requested.
+
+    Pass `domain` to scope the run to a single domain (e.g. "code", "math"); leave
+    it None to run across all domains.
     """
 
-    def __init__(self, limit: int | None = None, problem_id: int | None = None) -> None:
-        self.problem_set = pd.read_json(
-            Path(__file__).resolve().parent / "problems" / "problems.json"
-        )
+    def __init__(
+        self,
+        limit: int | None = None,
+        problem_id: int | None = None,
+        domain: str | None = None,
+    ) -> None:
+        self.problem_set = load_domain_problems(domain)
         if "problem_id" not in self.problem_set.columns:
             self.problem_set["problem_id"] = range(len(self.problem_set))
+
+        validate_problem_set(self.problem_set)
 
         if problem_id is not None:
             self.problem_set = self.problem_set[self.problem_set["problem_id"] == problem_id]
@@ -259,6 +390,7 @@ class LogicManager:
             "category": None if pd.isna(request.get("category")) else request.get("category"),
             "assert_cases": None if pd.isna(request.get("assert_cases")) else request.get("assert_cases"),
             "source_url": None if pd.isna(request.get("source_url")) else request.get("source_url"),
+            "validator": None if pd.isna(request.get("validator")) else request.get("validator"),
             "model_id": model_id,
             "router_reasoning": None if reasoning is None else str(reasoning),
             "max_attempts": self.max_attempts,

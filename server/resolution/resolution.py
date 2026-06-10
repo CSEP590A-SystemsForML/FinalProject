@@ -115,6 +115,7 @@ def validate_answer(solve_request: SolveRequest, answer: str) -> bool:
         verify=solve_request.verify,
         problem_id=solve_request.problem_id,
         assert_cases=solve_request.assert_cases,
+        validator=solve_request.validator,
     )
 
 

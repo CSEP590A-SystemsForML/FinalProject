@@ -20,6 +20,7 @@ class ProblemPayload(BaseModel):
     category: str | None = Field(default=None, description="Optional problem category, e.g. math, code, web.")
     assert_cases: str | None = Field(default=None, description="Optional assert cases for code validation.")
     source_url: str | None = Field(default=None, description="Optional source URL for web/factual problems.")
+    validator: str | None = Field(default=None, description="Named heuristic validator for verify=heuristic.")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Optional MVP escape hatch for extra fields.")
 
 
@@ -63,6 +64,7 @@ class SolveRequest(BaseModel):
     category: str | None = Field(default=None, description="Optional problem category, e.g. math, code, web.")
     assert_cases: str | None = Field(default=None, description="Optional assert cases for code validation.")
     source_url: str | None = Field(default=None, description="Optional source URL for web/factual problems.")
+    validator: str | None = Field(default=None, description="Named heuristic validator for verify=heuristic.")
     optimizations: OptimizationFlags | None = Field(
         default=None,
         description="Optional/debug flags; server DB row for run_id is authoritative.",
@@ -79,6 +81,7 @@ class SolveRequest(BaseModel):
             category=self.category,
             assert_cases=self.assert_cases,
             source_url=self.source_url,
+            validator=self.validator,
             metadata=self.metadata,
         )
 

@@ -5,7 +5,8 @@
     "answer": "4",
     "verify": "match",
     "difficulty": "very_easy",
-    "category": "math"
+    "category": "math",
+    "source": "base"
   },
   {
     "problem_id": 1,
@@ -13,7 +14,9 @@
     "answer": "",
     "verify": "heuristic",
     "difficulty": "hard",
-    "category": "code"
+    "category": "code",
+    "validator": "cuda_kernel",
+    "source": "base"
   },
   {
     "problem_id": 2,
@@ -21,7 +24,8 @@
     "answer": "blue",
     "verify": "match",
     "difficulty": "very_easy",
-    "category": "factual"
+    "category": "factual",
+    "source": "base"
   },
   {
     "problem_id": 3,
@@ -29,7 +33,8 @@
     "answer": "Ravenna",
     "verify": "match",
     "difficulty": "easy",
-    "category": "factual"
+    "category": "factual",
+    "source": "base"
   },
   {
     "problem_id": 4,
@@ -37,7 +42,9 @@
     "answer": "Smart pointers manage memory ownership and help prevent leaks.",
     "verify": "heuristic",
     "difficulty": "medium",
-    "category": "reasoning"
+    "category": "reasoning",
+    "validator": "smart_pointers",
+    "source": "base"
   },
   {
     "problem_id": 5,
@@ -45,7 +52,9 @@
     "answer": "",
     "verify": "heuristic",
     "difficulty": "hard",
-    "category": "code"
+    "category": "code",
+    "validator": "spin_lock",
+    "source": "base"
   },
   {
     "problem_id": 6,
@@ -54,6 +63,7 @@
     "verify": "tests",
     "difficulty": "easy",
     "category": "code",
-    "assert_cases": "assert rotate_grid([[1, 2], [3, 4]]) == [[3, 1], [4, 2]]\nassert rotate_grid([[1, 2, 3], [4, 5, 6]]) == [[4, 1], [5, 2], [6, 3]]"
+    "assert_cases": "assert rotate_grid([[1, 2], [3, 4]]) == [[3, 1], [4, 2]]\nassert rotate_grid([[1, 2, 3], [4, 5, 6]]) == [[4, 1], [5, 2], [6, 3]]",
+    "source": "base"
   }
 ]

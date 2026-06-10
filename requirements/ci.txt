@@ -1,0 +1,7 @@
+# Minimal dependencies for the E2E smoke test (scripts/e2e_smoke.py).
+# The smoke test mocks the model calls and reads the committed domain datasets,
+# so it does NOT need the heavy ML stack (vLLM, transformers, accelerate, etc.).
+fastapi>=0.115.0        # FastAPI app + pydantic + starlette
+httpx>=0.27.0           # required by fastapi.testclient.TestClient
+openai                  # imported by server.utils (client built lazily; not called in mock mode)
+pyyaml>=6.0.2           # configs read by cost_function / optimizations

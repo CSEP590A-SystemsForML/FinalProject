@@ -1,0 +1,100 @@
+[
+  {
+    "problem_id": 2,
+    "problem": "What color is the sky on a clear day? Answer with one lowercase word.",
+    "answer": "blue",
+    "verify": "match",
+    "difficulty": "very_easy",
+    "category": "factual",
+    "source": "base"
+  },
+  {
+    "problem_id": 3,
+    "problem": "What was the capital of the Western Roman Empire in 496 AD? Answer with one city name.",
+    "answer": "Ravenna",
+    "verify": "match",
+    "difficulty": "easy",
+    "category": "factual",
+    "source": "base"
+  },
+  {
+    "problem_id": 3000,
+    "problem": "What is the chemical symbol for tungsten? Answer with the symbol only.",
+    "answer": "W",
+    "verify": "heuristic",
+    "validator": "text_equals_ci",
+    "difficulty": "medium",
+    "category": "factual",
+    "source": "curated"
+  },
+  {
+    "problem_id": 3001,
+    "problem": "In what year did the fall of Constantinople occur?",
+    "answer": "1453",
+    "verify": "heuristic",
+    "validator": "numeric_match",
+    "difficulty": "easy",
+    "category": "factual",
+    "source": "curated"
+  },
+  {
+    "problem_id": 3002,
+    "problem": "How many bones are in the adult human body?",
+    "answer": "206",
+    "verify": "heuristic",
+    "validator": "numeric_match",
+    "difficulty": "easy",
+    "category": "factual",
+    "source": "curated"
+  },
+  {
+    "problem_id": 3003,
+    "problem": "What is the SI base unit of electric current? Answer with one word.",
+    "answer": "ampere",
+    "verify": "heuristic",
+    "validator": "text_equals_ci",
+    "difficulty": "easy",
+    "category": "factual",
+    "source": "curated"
+  },
+  {
+    "problem_id": 3004,
+    "problem": "What organelle is known as the powerhouse of the cell? Answer with one word.",
+    "answer": "mitochondria",
+    "verify": "heuristic",
+    "validator": "text_equals_ci",
+    "difficulty": "very_easy",
+    "category": "factual",
+    "source": "curated"
+  },
+  {
+    "problem_id": 3005,
+    "problem": "Which planet is known as the Red Planet? Answer with one word.",
+    "answer": "Mars",
+    "verify": "heuristic",
+    "validator": "text_equals_ci",
+    "difficulty": "very_easy",
+    "category": "factual",
+    "source": "curated"
+  },
+  {
+    "problem_id": 3006,
+    "problem": "In which year did the Chernobyl nuclear disaster occur?",
+    "answer": "1986",
+    "verify": "heuristic",
+    "validator": "numeric_match",
+    "difficulty": "easy",
+    "category": "factual",
+    "source": "curated"
+  },
+  {
+    "problem_id": 3007,
+    "problem": "What is the largest moon of Saturn? Answer with one word.",
+    "answer": "Titan",
+    "verify": "heuristic",
+    "validator": "text_equals_ci",
+    "difficulty": "medium",
+    "category": "factual",
+    "source": "curated"
+  }
+]

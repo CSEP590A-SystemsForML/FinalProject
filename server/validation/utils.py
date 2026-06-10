@@ -81,15 +81,16 @@ def validate(
     verify: str | None,
     problem_id: int | None = None,
     assert_cases: str | None = None,
+    validator: str | None = None,
 ) -> bool:
     """
-    Generic MVP validation entry point.
+    Generic validation entry point.
 
     Supported verify modes:
     - match: exact string match
     - tests: execute model_answer as code with assert_cases
     - judge: LLM judge against expected_answer
-    - heuristic: problem-specific registry validator
+    - heuristic: named registry validator (falls back to legacy problem_id map)
     """
 
     verify_mode = normalize_verify_mode(verify)
@@ -106,15 +107,13 @@ def validate(
         return model_judge(problem, model_answer, expected_answer or "")
 
     if verify_mode == "heuristic":
-        if problem_id is None:
-            return False
         from server.validation import registry
 
-        return registry.test(
-            problem_id,
-            True,
+        return registry.validate_named(
             model_answer,
             expected_answer or "",
+            validator_name=validator,
+            problem_id=problem_id,
         )
 
     return direct_match(model_answer, expected_answer or "")

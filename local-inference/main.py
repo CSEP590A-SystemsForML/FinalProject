@@ -14,8 +14,9 @@ async def main_loop(
     local_model_solves,
     limit,
     problem_id,
+    domain,
 ):
-    problem_set_manager = ProblemSetManager(limit=limit, problem_id=problem_id)
+    problem_set_manager = ProblemSetManager(limit=limit, problem_id=problem_id, domain=domain)
     logic_manager = LogicManager(
         prompt_type=prompt_type,
         max_active=max_active,
@@ -96,6 +97,11 @@ def build_parser():
         help="Only process the problem with this problem_id. Useful for deterministic smoke tests.",
     )
     parser.add_argument(
+        "--domain",
+        default=None,
+        help="Only process problems from this domain (e.g. code, math, reasoning). Default: all domains.",
+    )
+    parser.add_argument(
         "--test",
         action="store_true",
         help="Print router prompts and exit.",
@@ -130,5 +136,6 @@ if __name__ == "__main__":
                 local_model_solves=args.local_model_solves,
                 limit=args.limit,
                 problem_id=args.problem_id,
+                domain=args.domain,
             )
         )
