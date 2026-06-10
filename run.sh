@@ -11,9 +11,15 @@ Environment Variables:
   MODEL          Hugging Face model name
                  Default: ibm-granite/granite-4.1-3b
 
-  DTYPE          Quantization mode
+  DTYPE          Quantization mode (drives the quantized_local_lm optimization)
                  Values: bf16, fp8
                  Default: bf16
+                 Map: quantized_local_lm=off -> DTYPE=bf16; on -> DTYPE=fp8
+
+  QUANTIZE_KV_CACHE  fp8 KV cache (the quantized_kv_cache optimization)
+                 Values: true, false
+                 Default: true
+                 Set false for a baseline run without fp8 kv-cache.
 
   MAX_NUM_SEQS   Maximum concurrent sequences
                  Default:
@@ -50,7 +56,7 @@ Fixed Configuration:
   Prefix Caching:           Enabled
   Trust Remote Code:        Enabled
   Request Logging:          Disabled
-  KV Cache DType:           FP8
+  KV Cache DType:           FP8 when QUANTIZE_KV_CACHE=true (default), else vLLM default
 
 Service URLs with defaults:
   vLLM router:              http://127.0.0.1:7654/v1
@@ -72,6 +78,9 @@ HOST="${HOST:-127.0.0.1}"
 ROUTER_PORT="${ROUTER_PORT:-7654}"
 API_PORT="${API_PORT:-8001}"
 VLLM_BIN="${VLLM_BIN:-vllm}"
+# quantized_kv_cache optimization: defaults on (current behavior). Set
+# QUANTIZE_KV_CACHE=false for a baseline run without fp8 kv-cache.
+QUANTIZE_KV_CACHE="${QUANTIZE_KV_CACHE:-true}"
 
 # Dynamic defaults based on dtype.
 if [ -z "${MAX_NUM_SEQS:-}" ]; then
@@ -95,9 +104,14 @@ VLLM_CMD=(
     --max-num-seqs "$MAX_NUM_SEQS"
     --trust-remote-code
     --disable-log-requests
-    --kv-cache-dtype fp8
     --reasoning-parser qwen3
 )
+
+# quantized_kv_cache: only pass fp8 kv-cache when enabled, so the baseline can
+# run without it for a fair comparison.
+if [ "$QUANTIZE_KV_CACHE" = "true" ]; then
+    VLLM_CMD+=(--kv-cache-dtype fp8)
+fi
 
 if [ "$DTYPE" = "fp8" ]; then
     VLLM_CMD+=(

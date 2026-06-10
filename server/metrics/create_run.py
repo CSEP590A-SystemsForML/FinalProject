@@ -66,7 +66,16 @@ def upsert_optimization_run(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Create or update one metrics optimization run row."
+        description="Create or update one metrics optimization run row.",
+        epilog=(
+            "Step 1 of every benchmark: seed the run row the server reads as the "
+            "source of truth.\n"
+            "  Baseline (no optimizations):\n"
+            "    python server/metrics/create_run.py --run-id baseline_001 --label Baseline --baseline\n"
+            "  An optimization run:\n"
+            "    python server/metrics/create_run.py --run-id caveman_001 --label Caveman --caveman"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--run-id", required=True, help="Stable run id, e.g. baseline_001.")
     parser.add_argument("--label", default=None, help="Human-readable run label.")

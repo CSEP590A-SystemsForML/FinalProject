@@ -1,18 +1,69 @@
+from pathlib import Path
+
+import yaml
+
 from server.cost.cost_function import calculate_model_call_cost
 from server.interfaces import ModelCallResult, SolveRequest, SolveResponse
-from server.resolution.optimizations import caveman_prompt, compress_web_search
-from server.tools import truncate_web_context, web_search_tool
+from server.resolution.optimizations import (
+    caveman_prompt,
+    compress_web_search,
+    long_context_compression_ai,
+    long_context_compression_lemma,
+)
+from server.tools import run_candidate_code_tool, truncate_web_context, web_search_tool
 from server.utils import query_model
 from server.validation.utils import normalize_verify_mode, validate
 
 
-STRONGEST_MODEL_ID = "moonshotai/kimi-k2.6:free"
+_FALLBACK_STRONGEST_MODEL_ID = "moonshotai/kimi-k2.6:free"
+
+
+def _load_strongest_model_id() -> str:
+    """
+    The escalation target is the largest model in configs/models.yaml (by total
+    params). Reading it from config keeps the strongest tier in one place instead
+    of hardcoding it here. Falls back to a known strong model if config is
+    unreadable.
+    """
+
+    config_path = Path(__file__).resolve().parents[2] / "configs" / "models.yaml"
+    try:
+        with open(config_path, "r") as f:
+            models = yaml.safe_load(f) or {}
+        strongest = max(
+            models.items(),
+            key=lambda kv: float((kv[1] or {}).get("total_params", 0) or 0),
+        )
+        return strongest[0]
+    except Exception:
+        return _FALLBACK_STRONGEST_MODEL_ID
+
+
+STRONGEST_MODEL_ID = _load_strongest_model_id()
 
 
 def _optimization_enabled(run_optimizations: dict | None, key: str) -> bool:
     if not run_optimizations:
         return False
     return bool(run_optimizations.get(key))
+
+
+def _apply_long_context_compression(
+    text: str,
+    run_optimizations: dict | None,
+) -> str:
+    """
+    Shrink an over-long solver context, gated on the run's flags.
+
+    `_ai` takes precedence over `_lemma` when both are set. Both functions no-op
+    below their char threshold, so short prompts pass through untouched.
+    """
+
+    if _optimization_enabled(run_optimizations, "long_context_compression_ai"):
+        return long_context_compression_ai(text)
+    if _optimization_enabled(run_optimizations, "long_context_compression_lemma"):
+        return long_context_compression_lemma(text)
+    return text
 
 
 async def prepare_tool_context(
@@ -62,11 +113,18 @@ def build_solver_messages(
     solve_request: SolveRequest,
     tool_context: str = "",
     run_optimizations: dict | None = None,
-) -> list[dict[str, str]]:
+) -> tuple[list[dict[str, str]], dict[str, int]]:
     """
     Build the minimal MVP solver prompt.
 
-    Tool instructions are intentionally omitted until tool-server integration.
+    Tool use is deterministic and server-driven (web context is fetched in
+    prepare_tool_context; code is run + repaired in the solve loop), so the
+    prompt deliberately omits model-native function-calling instructions.
+
+    Returns the chat messages plus long-context-compression metadata
+    (original vs. compressed user-content chars) so the savings can be recorded
+    and quoted. When compression is disabled / under threshold the two char
+    counts are equal (i.e. zero savings).
     """
 
     verify_mode = normalize_verify_mode(solve_request.verify)
@@ -91,17 +149,54 @@ def build_solver_messages(
     if _optimization_enabled(run_optimizations, "caveman"):
         system_prompt = caveman_prompt(system_prompt)
 
-    return [
+    user_content = (
+        f"{solve_request.problem}\n\n{tool_context}"
+        if tool_context
+        else solve_request.problem
+    )
+    original_chars = len(user_content)
+    # Code specs can be whitespace-sensitive, so leave `tests` prompts intact.
+    if verify_mode != "tests":
+        user_content = _apply_long_context_compression(user_content, run_optimizations)
+    long_context_metadata = {
+        "long_context_original_chars": original_chars,
+        "long_context_compressed_chars": len(user_content),
+    }
+
+    messages = [
         {
             "role": "system",
             "content": system_prompt,
         },
         {
             "role": "user",
+            "content": user_content,
+        },
+    ]
+    return messages, long_context_metadata
+
+
+MAX_REPAIR_FEEDBACK_CHARS = 2_000
+
+
+def _code_repair_messages(candidate_code: str, exec_result) -> list[dict[str, str]]:
+    """
+    Build the assistant+user turn that shows the solver its failing test output
+    so it can repair the code on the next attempt.
+    """
+
+    feedback = (exec_result.output or exec_result.error or "tests failed").strip()
+    if len(feedback) > MAX_REPAIR_FEEDBACK_CHARS:
+        feedback = feedback[:MAX_REPAIR_FEEDBACK_CHARS] + " [truncated]"
+
+    return [
+        {"role": "assistant", "content": candidate_code},
+        {
+            "role": "user",
             "content": (
-                f"{solve_request.problem}\n\n{tool_context}"
-                if tool_context
-                else solve_request.problem
+                "Your code did not pass its tests. Runner output:\n"
+                f"{feedback}\n\n"
+                "Return only the corrected code. Do not wrap it in markdown."
             ),
         },
     ]
@@ -158,10 +253,13 @@ async def solve_problem(
     escalated = False
     final_model_id = solve_request.model_id
 
-    tool_context, tool_invocations, tool_metadata = await prepare_tool_context(solve_request, run_optimizations)
-    messages = build_solver_messages(solve_request, tool_context, run_optimizations)
+    verify_mode = normalize_verify_mode(solve_request.verify)
+    runs_code_tests = verify_mode == "tests" and bool(solve_request.assert_cases)
 
-    for _ in range(solve_request.max_attempts):
+    tool_context, tool_invocations, tool_metadata = await prepare_tool_context(solve_request, run_optimizations)
+    messages, long_context_metadata = build_solver_messages(solve_request, tool_context, run_optimizations)
+
+    for attempt_index in range(solve_request.max_attempts):
         attempts += 1
         call_result = query_model(solve_request.model_id, messages)
         final_model_id = solve_request.model_id
@@ -178,6 +276,14 @@ async def solve_problem(
             solved = True
             error = None
             break
+
+        # solve -> run -> repair: for code problems, run the candidate against
+        # its asserts in the sandboxed runner and feed the failure back so the
+        # next attempt (or the escalation model) can fix it.
+        if runs_code_tests and attempt_index < solve_request.max_attempts - 1:
+            exec_result = await run_candidate_code_tool(final_answer, solve_request.assert_cases)
+            tool_invocations.append(exec_result.name)
+            messages = messages + _code_repair_messages(final_answer, exec_result)
 
     if not solved and solve_request.model_id != STRONGEST_MODEL_ID:
         escalated = True
@@ -213,6 +319,8 @@ async def solve_problem(
         total_cost=total_cost,
         web_context_original_chars=tool_metadata["web_context_original_chars"],
         web_context_sent_chars=tool_metadata["web_context_sent_chars"],
+        long_context_original_chars=long_context_metadata["long_context_original_chars"],
+        long_context_compressed_chars=long_context_metadata["long_context_compressed_chars"],
         escalated=escalated,
         error=error,
     )

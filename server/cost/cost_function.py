@@ -5,6 +5,26 @@ import yaml
 from server.interfaces import CompletionConfig, InferenceConfig, ModelConfig
 
 
+# Image tokens are priced above text input tokens: vision encoders + the raw
+# token volume of images are, per the pitch, disproportionately expensive.
+IMAGE_TOKEN_PREMIUM = 2.0
+
+# Rough OpenAI-style estimate: a base cost plus per-512px-tile cost.
+IMAGE_BASE_TOKENS = 85
+IMAGE_TOKENS_PER_TILE = 170
+
+
+def estimate_image_tokens(num_tiles: int = 4) -> int:
+    """
+    Estimate the prompt-token cost of one image.
+
+    We don't always know an image's dimensions up front, so default to a
+    medium-detail 4-tile image. Callers that know the tiling can pass num_tiles.
+    """
+
+    return IMAGE_BASE_TOKENS + max(0, int(num_tiles)) * IMAGE_TOKENS_PER_TILE
+
+
 def calculate_cost(
     model_config: ModelConfig,
     inference_config: InferenceConfig,
@@ -42,19 +62,33 @@ def calculate_cost(
 
         overall_model_factor = param_factor * hardware_penalty
 
+        # Image tokens occupy the prompt alongside text tokens (they drive the
+        # same quadratic attention prefill and lengthen the decode sequence).
+        image_tokens = getattr(completion_config, "image_tokens", 0) or 0
+        total_prompt_tokens = completion_config.prompt_tokens + image_tokens
+
         # Token counts in millions to match base costs
-        p_m = completion_config.prompt_tokens / 1_000_000
+        p_m = total_prompt_tokens / 1_000_000
         c_m = completion_config.completion_tokens / 1_000_000
 
         # Prefill cost: Quadratic for attention layers, linear for MoE/Dense MLP
         prefill_token_factor = (attention_fraction * (p_m**2)) + ((1 - attention_fraction) * p_m)
         input_cost = base_cost_per_million_input_tokens * prefill_token_factor * overall_model_factor
 
+        # Image-token surcharge: charge image tokens at IMAGE_TOKEN_PREMIUM x the
+        # linear input rate (their quadratic share is already in input_cost above).
+        image_surcharge = (
+            base_cost_per_million_input_tokens
+            * (image_tokens / 1_000_000)
+            * (IMAGE_TOKEN_PREMIUM - 1.0)
+            * overall_model_factor
+        )
+
         # Decode cost: scaled by average sequence length during decode (in millions)
-        avg_seq_len_m = (completion_config.prompt_tokens + (completion_config.completion_tokens / 2)) / 1_000_000
+        avg_seq_len_m = (total_prompt_tokens + (completion_config.completion_tokens / 2)) / 1_000_000
         output_cost = base_cost_per_million_output_tokens * c_m * avg_seq_len_m * overall_model_factor
 
-        return input_cost + output_cost
+        return input_cost + image_surcharge + output_cost
 
     return sum(io_cost(model_config, comp) for comp in inference_config.completions)
 
@@ -81,7 +115,12 @@ def load_model_config(model_id: str) -> ModelConfig:
     )
 
 
-def calculate_model_call_cost(model_id: str, prompt_tokens: int, completion_tokens: int) -> float:
+def calculate_model_call_cost(
+    model_id: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    image_tokens: int = 0,
+) -> float:
     """
     Convenience helper for costing a single model completion.
     """
@@ -92,6 +131,7 @@ def calculate_model_call_cost(model_id: str, prompt_tokens: int, completion_toke
             CompletionConfig(
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
+                image_tokens=image_tokens,
             )
         ]
     )

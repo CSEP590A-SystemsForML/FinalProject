@@ -21,7 +21,7 @@ case "$1" in
         python3.12 -m pip install -r requirements/colab.txt
         ;;
     *)
-        echo "Usage: ./setup.sh [mac|colab]"
+        echo "Usage: ./install.sh [mac|colab]"
         exit 1
         ;;
 esac

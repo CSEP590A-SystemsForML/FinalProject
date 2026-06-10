@@ -355,11 +355,12 @@ class LogicManager:
                 f"{models_prompt}"
             )
 
-    async def handle(self, request_type: Literal["problem", "solution"], request):
-        if request_type == "problem":
-            return await self.handle_problem(request)
-        else:
-            return await self.handle_solution(request)
+    async def handle(self, request_type: Literal["problem"], request):
+        if request_type != "problem":
+            raise ValueError(
+                f"Unsupported request_type={request_type!r}; only 'problem' is handled."
+            )
+        return await self.handle_problem(request)
 
     def _normalize_model_id(self, model_id: str | None) -> str:
         if model_id in self.valid_model_ids:
@@ -390,6 +391,7 @@ class LogicManager:
             "category": None if pd.isna(request.get("category")) else request.get("category"),
             "assert_cases": None if pd.isna(request.get("assert_cases")) else request.get("assert_cases"),
             "source_url": None if pd.isna(request.get("source_url")) else request.get("source_url"),
+            "image_url": None if pd.isna(request.get("image_url")) else request.get("image_url"),
             "validator": None if pd.isna(request.get("validator")) else request.get("validator"),
             "model_id": model_id,
             "router_reasoning": None if reasoning is None else str(reasoning),
@@ -443,9 +445,6 @@ class LogicManager:
             f"Server response: {solve_response}\n"
         )
         return solve_response
-
-    async def handle_solution(self, request):
-        raise NotImplementedError("Local model cannot handle solutions yet.")
 
     def simple_routing_logger(self, request, model_id, reasoning):
         print("=" * 30)

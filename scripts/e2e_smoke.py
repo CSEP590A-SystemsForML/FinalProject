@@ -19,9 +19,11 @@ This is intentionally lightweight and CI-friendly. A real run against a live
 vLLM router + OpenRouter is described in the repo README.
 
 Usage:
-    python scripts/e2e_smoke.py                  # a few problems from every domain
-    python scripts/e2e_smoke.py --domain math    # one domain only
-    python scripts/e2e_smoke.py --per-domain 5   # N problems per domain
+    python scripts/e2e_smoke.py                       # a few problems from every domain
+    python scripts/e2e_smoke.py --domain math         # one domain only
+    python scripts/e2e_smoke.py --per-domain 5        # N problems per domain
+    python scripts/e2e_smoke.py --domain code --per-domain 200 --analyze
+                                                      # run all code problems + analysis report
 """
 
 import argparse
@@ -136,7 +138,48 @@ def install_mock_models(current: dict) -> None:
     utils.query_model = fake_query_model
 
 
-def run(domain: str | None, per_domain: int) -> int:
+def run_analysis(db_path: Path) -> int:
+    """
+    Run the metrics analysis over the populated DB and print the key tables.
+
+    Proves the analysis path works on a real run (not just that rows landed).
+    Requires pandas; matplotlib is optional (plots are skipped if absent).
+    """
+
+    try:
+        import sqlite3
+
+        import server.metrics.analysis_script as az
+    except ModuleNotFoundError as e:
+        print(f"\n[analyze] skipped: missing dependency ({e.name}). pip install pandas to enable.")
+        return 1
+
+    conn = sqlite3.connect(db_path)
+    try:
+        sections = {
+            "RUN SUMMARY": az.run_summary_with_optimizations(conn),
+            "BASELINE COMPARISON": az.baseline_comparison(conn),
+            "MODEL USAGE": az.model_usage_summary(conn),
+            "COST BY DIFFICULTY": az.cost_by_difficulty(conn),
+            "COST VS SOLVE RATE": az.cost_vs_solve_rate_frontier(conn),
+            "TOKEN BREAKDOWN": az.token_breakdown(conn),
+            "ROUTER CALIBRATION": az.router_calibration(conn),
+        }
+        print("\n=== ANALYSIS ===")
+        for title, df in sections.items():
+            print(f"\n--- {title} ---")
+            print("No data." if df.empty else df.to_string(index=False))
+
+        if sections["RUN SUMMARY"].empty:
+            print("\n[analyze] FAILED: run summary is empty.")
+            return 1
+        print("\n[analyze] OK: analysis ran over the populated metrics DB.")
+        return 0
+    finally:
+        conn.close()
+
+
+def run(domain: str | None, per_domain: int, analyze: bool = False) -> int:
     sys.path.insert(0, str(REPO_ROOT))
 
     tmp_db = Path(tempfile.mkdtemp(prefix="e2e-metrics-")) / "metrics.db"
@@ -186,6 +229,7 @@ def run(domain: str | None, per_domain: int) -> int:
     print(f"solved:              {metrics['solved_problems']}  (solve_rate={metrics['solve_rate']:.2%})")
     print(f"escalations:         {metrics['escalations']}")
     print(f"total cost:          {metrics['total_cost']:.6f}")
+    print(f"long-ctx chars saved:{metrics.get('long_context_chars_saved', 0)}")
     print(f"model usage:         {metrics['model_usage']}")
 
     failures = []
@@ -201,6 +245,9 @@ def run(domain: str | None, per_domain: int) -> int:
         return 1
 
     print("\nPASSED: pipeline wired end-to-end (routing -> resolution -> validation -> cost -> metrics).")
+
+    if analyze:
+        return run_analysis(tmp_db)
     return 0
 
 
@@ -208,8 +255,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run the E2E pipeline smoke test.")
     parser.add_argument("--domain", default=None, help="Restrict to one domain (default: all).")
     parser.add_argument("--per-domain", type=int, default=3, help="Problems sampled per domain.")
+    parser.add_argument(
+        "--analyze",
+        action="store_true",
+        help="After the run, run metrics analysis over the populated DB (needs pandas).",
+    )
     args = parser.parse_args()
-    raise SystemExit(run(args.domain, args.per_domain))
+    raise SystemExit(run(args.domain, args.per_domain, analyze=args.analyze))
 
 
 if __name__ == "__main__":

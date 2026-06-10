@@ -33,6 +33,14 @@ def _ensure_problem_solving_columns(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE problem_solving ADD COLUMN web_context_sent_chars INTEGER DEFAULT 0"
         )
+    if "long_context_original_chars" not in existing_columns:
+        conn.execute(
+            "ALTER TABLE problem_solving ADD COLUMN long_context_original_chars INTEGER DEFAULT 0"
+        )
+    if "long_context_compressed_chars" not in existing_columns:
+        conn.execute(
+            "ALTER TABLE problem_solving ADD COLUMN long_context_compressed_chars INTEGER DEFAULT 0"
+        )
 
 
 def initialize_db() -> None:
@@ -113,9 +121,11 @@ def log_problem_solving_result(solve_response: SolveResponse) -> None:
                 final_answer,
                 web_context_original_chars,
                 web_context_sent_chars,
+                long_context_original_chars,
+                long_context_compressed_chars,
                 error
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 solve_response.run_id,
@@ -132,6 +142,8 @@ def log_problem_solving_result(solve_response: SolveResponse) -> None:
                 solve_response.final_answer,
                 solve_response.web_context_original_chars,
                 solve_response.web_context_sent_chars,
+                solve_response.long_context_original_chars,
+                solve_response.long_context_compressed_chars,
                 solve_response.error,
             ),
         )
@@ -313,7 +325,9 @@ async def metrics():
                 COALESCE(SUM(attempts), 0) AS total_attempts,
                 COALESCE(SUM(CASE WHEN escalated THEN 1 ELSE 0 END), 0) AS escalations,
                 COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
-                COALESCE(SUM(completion_tokens), 0) AS completion_tokens
+                COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                COALESCE(SUM(long_context_original_chars), 0) AS long_context_original_chars,
+                COALESCE(SUM(long_context_compressed_chars), 0) AS long_context_compressed_chars
             FROM problem_solving
             """
         ).fetchone()
@@ -341,6 +355,12 @@ async def metrics():
             "escalations": summary["escalations"],
             "prompt_tokens": summary["prompt_tokens"],
             "completion_tokens": summary["completion_tokens"],
+            "long_context_original_chars": summary["long_context_original_chars"],
+            "long_context_compressed_chars": summary["long_context_compressed_chars"],
+            "long_context_chars_saved": (
+                summary["long_context_original_chars"]
+                - summary["long_context_compressed_chars"]
+            ),
             "model_usage": {row["model_id"]: row["count"] for row in model_rows},
         }
     finally:

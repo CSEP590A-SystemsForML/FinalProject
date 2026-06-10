@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS problem_solving (
     final_answer TEXT,
     web_context_original_chars INTEGER DEFAULT 0,
     web_context_sent_chars INTEGER DEFAULT 0,
+    long_context_original_chars INTEGER DEFAULT 0,
+    long_context_compressed_chars INTEGER DEFAULT 0,
     error TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

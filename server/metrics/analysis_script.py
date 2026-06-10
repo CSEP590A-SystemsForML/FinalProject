@@ -12,6 +12,16 @@ BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "metrics.db"
 OUTPUT_DIR = BASE_DIR / "outputs"
 OUTPUT_IMAGE = OUTPUT_DIR / "cost_by_optimizations.png"
+FRONTIER_IMAGE = OUTPUT_DIR / "cost_vs_solve_rate.png"
+
+# Rough expense ordering of the routable solver tiers (cheapest -> priciest),
+# used by the router-calibration heuristic.
+MODEL_EXPENSE_RANK = {
+    "gpt-oss-20b": 1,
+    "gpt-oss-120b": 2,
+    "deepseek-v4-flash": 3,
+    "kimi-k2.6": 4,
+}
 
 OPTIMIZATION_COLS = [
     "baseline",
@@ -286,6 +296,180 @@ def most_expensive_problems(conn: sqlite3.Connection, limit: int = 10) -> pd.Dat
     return _read_sql_or_empty(conn, query)
 
 
+def cost_vs_solve_rate_frontier(conn: sqlite3.Connection) -> pd.DataFrame:
+    """
+    One row per run with (total_cost, solve_rate) — the money chart's data.
+    """
+
+    df = run_summary_with_optimizations(conn)
+    if df.empty:
+        return df
+
+    columns = [
+        c
+        for c in ["run_id", "run_label", "active_optimizations", "total_cost", "solve_rate", "cost_per_solved", "total_problems"]
+        if c in df.columns
+    ]
+    return df[columns].sort_values("total_cost").reset_index(drop=True)
+
+
+def token_breakdown(conn: sqlite3.Connection) -> pd.DataFrame:
+    """
+    Per-run prompt/completion token totals plus long-context chars saved.
+    """
+
+    if not _table_exists(conn, "problem_solving"):
+        return pd.DataFrame()
+
+    columns = _table_columns(conn, "problem_solving")
+    long_ctx_select = ""
+    if {"long_context_original_chars", "long_context_compressed_chars"}.issubset(columns):
+        long_ctx_select = """,
+        COALESCE(SUM(long_context_original_chars), 0) AS long_context_original_chars,
+        COALESCE(SUM(long_context_compressed_chars), 0) AS long_context_compressed_chars"""
+
+    query = f"""
+    SELECT
+        run_id,
+        COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+        COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+        COALESCE(SUM(prompt_tokens + completion_tokens), 0) AS total_tokens
+        {long_ctx_select}
+    FROM problem_solving
+    GROUP BY run_id
+    ORDER BY run_id
+    """
+    df = _read_sql_or_empty(conn, query)
+    if not df.empty and "long_context_original_chars" in df.columns:
+        df["long_context_chars_saved"] = (
+            df["long_context_original_chars"] - df["long_context_compressed_chars"]
+        )
+    return df
+
+
+def reasoning_audit(conn: sqlite3.Connection, limit: int = 50) -> pd.DataFrame:
+    """
+    Per-problem router reasoning next to the solve outcome (for the appendix).
+    """
+
+    if not _table_exists(conn, "problem_solving") or not _table_exists(conn, "routing"):
+        return pd.DataFrame()
+
+    query = f"""
+    SELECT
+        ps.run_id,
+        ps.problem_id,
+        r.difficulty,
+        r.category,
+        ps.model_id,
+        ps.solved,
+        ps.escalated,
+        ps.attempts,
+        ps.total_cost,
+        r.reasoning AS router_reasoning
+    FROM problem_solving ps
+    LEFT JOIN routing r
+        ON ps.run_id = r.run_id
+       AND ps.problem_id = r.problem_id
+    ORDER BY ps.run_id, ps.problem_id
+    LIMIT {int(limit)}
+    """
+    return _read_sql_or_empty(conn, query)
+
+
+def _model_rank(model_id: object) -> int:
+    name = str(model_id).strip().lower()
+    for key, rank in MODEL_EXPENSE_RANK.items():
+        if key in name:
+            return rank
+    return 0
+
+
+def router_calibration(conn: sqlite3.Connection) -> pd.DataFrame:
+    """
+    Over- vs under-routing per run.
+
+    - under-routed: the problem escalated (chosen model too weak).
+    - over-routed (heuristic): an easy/very_easy problem solved on the first try
+      by an expensive tier (deepseek / kimi), i.e. likely paid for more than needed.
+    """
+
+    if not _table_exists(conn, "problem_solving") or not _table_exists(conn, "routing"):
+        return pd.DataFrame()
+
+    query = """
+    SELECT
+        ps.run_id,
+        ps.problem_id,
+        ps.model_id,
+        ps.solved,
+        ps.escalated,
+        ps.attempts,
+        COALESCE(r.difficulty, 'unknown') AS difficulty
+    FROM problem_solving ps
+    LEFT JOIN routing r
+        ON ps.run_id = r.run_id
+       AND ps.problem_id = r.problem_id
+    """
+    df = _read_sql_or_empty(conn, query)
+    if df.empty:
+        return df
+
+    df["expense_rank"] = df["model_id"].apply(_model_rank)
+    df["under_routed"] = df["escalated"].fillna(False).astype(bool)
+    df["over_routed"] = (
+        df["solved"].fillna(False).astype(bool)
+        & ~df["escalated"].fillna(False).astype(bool)
+        & (df["attempts"].fillna(0) <= 1)
+        & df["difficulty"].str.lower().isin(["very_easy", "easy"])
+        & (df["expense_rank"] >= 3)
+    )
+
+    grouped = (
+        df.groupby("run_id")
+        .agg(
+            total_problems=("problem_id", "count"),
+            under_routed=("under_routed", "sum"),
+            over_routed=("over_routed", "sum"),
+        )
+        .reset_index()
+    )
+    grouped["under_routed_rate"] = grouped["under_routed"] / grouped["total_problems"]
+    grouped["over_routed_rate"] = grouped["over_routed"] / grouped["total_problems"]
+    return grouped
+
+
+def plot_cost_vs_solve_rate(conn: sqlite3.Connection) -> None:
+    """
+    Scatter each run on (total_cost, solve_rate) — the paper's frontier chart.
+    """
+
+    df = cost_vs_solve_rate_frontier(conn)
+    if df.empty or plt is None:
+        return
+
+    plt.figure(figsize=(8, 6))
+    plt.scatter(df["total_cost"], df["solve_rate"], color="seagreen", edgecolor="black", zorder=3)
+    label_col = "run_label" if "run_label" in df.columns else "run_id"
+    for _, row in df.iterrows():
+        plt.annotate(
+            str(row[label_col]),
+            (row["total_cost"], row["solve_rate"]),
+            textcoords="offset points",
+            xytext=(6, 4),
+            fontsize=8,
+        )
+    plt.title("Cost vs. Solve Rate by Run")
+    plt.xlabel("Total Cost")
+    plt.ylabel("Solve Rate")
+    plt.grid(True, linestyle="--", alpha=0.7)
+    plt.tight_layout()
+    FRONTIER_IMAGE.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(FRONTIER_IMAGE, dpi=300)
+    plt.close()
+    print(f"Frontier plot saved to {FRONTIER_IMAGE}")
+
+
 def calculate_costs_and_plot(conn: sqlite3.Connection | None = None) -> pd.DataFrame:
     """
     Plot total cost per run using problem_solving.total_cost.
@@ -416,6 +600,10 @@ def save_analysis_tables(conn: sqlite3.Connection, output_dir: Path = OUTPUT_DIR
         "cost_by_difficulty": cost_by_difficulty(conn),
         "most_expensive_problems": most_expensive_problems(conn),
         "routing_outliers": determine_outliers(conn),
+        "cost_vs_solve_rate": cost_vs_solve_rate_frontier(conn),
+        "token_breakdown": token_breakdown(conn),
+        "router_calibration": router_calibration(conn),
+        "reasoning_audit": reasoning_audit(conn),
     }
 
     saved_paths: dict[str, Path] = {}
@@ -443,6 +631,9 @@ def print_compact_report() -> None:
             ("COST BY DIFFICULTY", cost_by_difficulty(conn)),
             ("MOST EXPENSIVE PROBLEMS", most_expensive_problems(conn)),
             ("ROUTING OUTLIERS", determine_outliers(conn)),
+            ("COST VS SOLVE RATE", cost_vs_solve_rate_frontier(conn)),
+            ("TOKEN BREAKDOWN", token_breakdown(conn)),
+            ("ROUTER CALIBRATION", router_calibration(conn)),
         ]
 
         for title, df in sections:
@@ -456,6 +647,7 @@ def print_compact_report() -> None:
         if saved_paths:
             print(f"\nSaved analysis tables to {OUTPUT_DIR}")
         calculate_costs_and_plot(conn)
+        plot_cost_vs_solve_rate(conn)
     finally:
         conn.close()
 

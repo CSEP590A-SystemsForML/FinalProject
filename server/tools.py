@@ -18,16 +18,18 @@ class ToolCallResult(BaseModel):
 
 def _load_tool_server_module():
     """
-    Load tool-server/server.py despite the hyphen in the directory name.
+    Load tool-server/core.py despite the hyphen in the directory name.
 
-    MVP choice: call the async tool functions directly rather than adding MCP
-    transport/client complexity yet.
+    MVP choice: call the plain async executors directly rather than adding MCP
+    transport/client complexity yet. We load `core.py` (not `server.py`) so the
+    resolution path does not import `fastmcp`; that keeps the Python-runner and
+    web-fetch usable in lightweight environments (e.g. CI) without the MCP stack.
     """
 
-    tool_server_path = Path(__file__).resolve().parents[1] / "tool-server" / "server.py"
-    spec = importlib.util.spec_from_file_location("tool_server_server", tool_server_path)
+    tool_core_path = Path(__file__).resolve().parents[1] / "tool-server" / "core.py"
+    spec = importlib.util.spec_from_file_location("tool_server_core", tool_core_path)
     if spec is None or spec.loader is None:
-        raise ImportError(f"Could not load tool server module from {tool_server_path}")
+        raise ImportError(f"Could not load tool core module from {tool_core_path}")
 
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -51,6 +53,21 @@ async def run_python_code_tool(code: str, timeout_seconds: int = 20) -> ToolCall
             ok=False,
             error=repr(e),
         )
+
+
+async def run_candidate_code_tool(
+    code: str,
+    assert_cases: str,
+    timeout_seconds: int = 20,
+) -> ToolCallResult:
+    """
+    Run model-produced code together with its assert_cases in the sandboxed
+    Python runner. `ok` means the asserts passed (exit 0); otherwise `output`
+    carries stdout+stderr so the solver can be shown why it failed and repair.
+    """
+
+    script = f"{code or ''}\n{assert_cases or ''}"
+    return await run_python_code_tool(script, timeout_seconds=timeout_seconds)
 
 
 async def web_search_tool(url: str, timeout_seconds: int = 20) -> ToolCallResult:

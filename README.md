@@ -61,20 +61,43 @@ Available flags (see `create_run.py --help`): `--baseline`, `--caveman`, `--capa
 `--web-search-compression`, `--local-model-solves`, `--quantized-local-lm`, `--quantized-kv-cache`,
 `--long-context-compression-lemma`, `--long-context-compression-ai`.
 
-## End-to-end smoke test
+## End-to-end smoke test (no GPU / no API key)
 
-Verify the whole resolution pipeline without a GPU or API key. This drives the
-real FastAPI server in-process and mocks only the router + solver model calls:
+Verify the whole resolution pipeline deterministically. This drives the real
+FastAPI server in-process and mocks only the router + solver model calls (the
+solver returns each problem's known-good answer, so validation/cost/metrics are
+all exercised):
 
 ```bash
-python scripts/e2e_smoke.py                # a few problems from every domain
-python scripts/e2e_smoke.py --domain math  # one domain
+python scripts/e2e_smoke.py                       # a few problems from every domain
+python scripts/e2e_smoke.py --domain math         # one domain
 python scripts/e2e_smoke.py --per-domain 5
+python scripts/e2e_smoke.py --domain code --per-domain 500 --analyze   # all code + analysis report
 ```
 
 It exercises routing log -> resolution loop -> validation (match/tests/heuristic/judge)
 -> cost function -> SQLite metrics, and asserts rows landed and problems were solved.
-Exit code is non-zero on failure, so it doubles as a CI check.
+`--analyze` then runs the metrics analysis over the populated DB. Exit code is
+non-zero on failure, so it doubles as a CI check (run on every PR; see
+`.github/workflows/e2e-smoke.yml`).
+
+## Live end-to-end eval (real models, needs an API key)
+
+To measure how often the **real** external models solve the problems — and at
+what cost — run the live eval. It uses the real resolution pipeline and real
+model calls; only the router is a deterministic difficulty→model stand-in
+(the real router needs the local vLLM model on a GPU):
+
+```bash
+export API_TOKEN=sk-or-...
+python scripts/live_eval.py --domain math --per-domain 5 --analyze
+python scripts/live_eval.py --domain code --per-domain 10
+python scripts/live_eval.py --domain math --per-domain 5 --model openai/gpt-oss-120b:free
+python scripts/live_eval.py --domain math --per-domain 5 --optimizations caveman
+```
+
+Results persist to a SQLite DB (path printed at the end) so you can re-run
+`analysis_script.py` against it later.
 
 ## Problem domains
 

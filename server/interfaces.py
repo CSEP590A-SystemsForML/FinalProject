@@ -20,6 +20,7 @@ class ProblemPayload(BaseModel):
     category: str | None = Field(default=None, description="Optional problem category, e.g. math, code, web.")
     assert_cases: str | None = Field(default=None, description="Optional assert cases for code validation.")
     source_url: str | None = Field(default=None, description="Optional source URL for web/factual problems.")
+    image_url: str | None = Field(default=None, description="Optional image URL for category=image problems (vision tier).")
     validator: str | None = Field(default=None, description="Named heuristic validator for verify=heuristic.")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Optional MVP escape hatch for extra fields.")
 
@@ -64,6 +65,7 @@ class SolveRequest(BaseModel):
     category: str | None = Field(default=None, description="Optional problem category, e.g. math, code, web.")
     assert_cases: str | None = Field(default=None, description="Optional assert cases for code validation.")
     source_url: str | None = Field(default=None, description="Optional source URL for web/factual problems.")
+    image_url: str | None = Field(default=None, description="Optional image URL for category=image problems (vision tier).")
     validator: str | None = Field(default=None, description="Named heuristic validator for verify=heuristic.")
     optimizations: OptimizationFlags | None = Field(
         default=None,
@@ -81,6 +83,7 @@ class SolveRequest(BaseModel):
             category=self.category,
             assert_cases=self.assert_cases,
             source_url=self.source_url,
+            image_url=self.image_url,
             validator=self.validator,
             metadata=self.metadata,
         )
@@ -125,6 +128,8 @@ class SolveResponse(BaseModel):
     total_cost: float = 0.0
     web_context_original_chars: int = 0
     web_context_sent_chars: int = 0
+    long_context_original_chars: int = 0
+    long_context_compressed_chars: int = 0
     escalated: bool = False
     error: str | None = None
 
@@ -144,6 +149,7 @@ class ModelCallResult(BaseModel):
 class CompletionConfig(BaseModel):
     prompt_tokens: int
     completion_tokens: int
+    image_tokens: int = 0
 
 
 class InferenceConfig(BaseModel):

@@ -5,3 +5,5 @@ fastapi>=0.115.0        # FastAPI app + pydantic + starlette
 httpx>=0.27.0           # required by fastapi.testclient.TestClient
 openai                  # imported by server.utils (client built lazily; not called in mock mode)
 pyyaml>=6.0.2           # configs read by cost_function / optimizations
+pandas>=2.0.0           # metrics analysis tables (scripts/e2e_smoke.py --analyze)
+# matplotlib is intentionally omitted: analysis_script guards it and skips plots when absent.
