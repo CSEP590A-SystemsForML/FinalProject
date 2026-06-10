@@ -1,8 +1,13 @@
 import sqlite3
 from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+
+# Load server/.env so API_TOKEN / OPENROUTER_API_KEY are available to the
+# external-model client even when the process is launched by run.sh.
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 from server.interfaces import LocalSolveRequest, SolveRequest, SolveResponse
 from server.resolution.resolution import solve_problem

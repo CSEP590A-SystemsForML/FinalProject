@@ -230,7 +230,7 @@ class LocalInferenceManager:
                 model=self.model,
                 messages=messages,
                 temperature=0,
-                max_completion_tokens=8192,
+                max_completion_tokens=4096,
                 stop=[
                     "<|endoftext|>",
                 ],
@@ -251,7 +251,7 @@ class LocalInferenceManager:
                 model=self.model,
                 messages=messages,
                 temperature=0,
-                max_completion_tokens=8192,
+                max_completion_tokens=4096,
                 stop=[
                     "<|endoftext|>",
                 ],
