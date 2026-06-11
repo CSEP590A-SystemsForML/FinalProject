@@ -15,7 +15,7 @@ from server.utils import query_model
 from server.validation.utils import normalize_verify_mode, validate
 
 
-_FALLBACK_STRONGEST_MODEL_ID = "moonshotai/kimi-k2.6:free"
+_FALLBACK_STRONGEST_MODEL_ID = "nvidia/nemotron-3-ultra-550b-a55b:free"
 
 
 def _load_strongest_model_id() -> str:

@@ -371,7 +371,7 @@ class LogicManager:
             if stripped in self.valid_model_ids:
                 return stripped
 
-        fallback_model = "moonshotai/kimi-k2.6:free"
+        fallback_model = "nvidia/nemotron-3-ultra-550b-a55b:free"
         if fallback_model in self.valid_model_ids:
             return fallback_model
 

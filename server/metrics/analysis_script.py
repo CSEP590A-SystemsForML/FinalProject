@@ -19,8 +19,8 @@ FRONTIER_IMAGE = OUTPUT_DIR / "cost_vs_solve_rate.png"
 MODEL_EXPENSE_RANK = {
     "gpt-oss-20b": 1,
     "gpt-oss-120b": 2,
-    "deepseek-v4-flash": 3,
-    "kimi-k2.6": 4,
+    "qwen3-coder": 3,
+    "nemotron-3-ultra": 4,
 }
 
 OPTIMIZATION_COLS = [
@@ -391,7 +391,7 @@ def router_calibration(conn: sqlite3.Connection) -> pd.DataFrame:
 
     - under-routed: the problem escalated (chosen model too weak).
     - over-routed (heuristic): an easy/very_easy problem solved on the first try
-      by an expensive tier (deepseek / kimi), i.e. likely paid for more than needed.
+      by an expensive tier (deepseek / nemotron-ultra), i.e. likely paid for more than needed.
     """
 
     if not _table_exists(conn, "problem_solving") or not _table_exists(conn, "routing"):
@@ -559,15 +559,15 @@ def determine_outliers(conn: sqlite3.Connection | None = None) -> pd.DataFrame:
             if difficulty not in ("very_easy", "easy") and "gpt-oss-20b" in model_id:
                 is_outlier = True
                 reason = "Non-easy problem routed to gpt-oss-20b"
-            elif difficulty == "medium" and not ("gpt-oss-120b" in model_id or "deepseek-v4-flash" in model_id):
+            elif difficulty == "medium" and not ("gpt-oss-120b" in model_id or "qwen3-coder" in model_id):
                 is_outlier = True
-                reason = "Medium problem not routed to gpt-oss-120b or deepseek-v4-flash"
+                reason = "Medium problem not routed to gpt-oss-120b or qwen3-coder"
             elif difficulty == "hard" and ("gpt-oss-20b" in model_id or "gpt-oss-120b" in model_id):
                 is_outlier = True
                 reason = "Hard problem routed to gpt-oss-20b or gpt-oss-120b"
-            elif difficulty in ("very_hard", "very hard") and "kimi-k2.6" not in model_id:
+            elif difficulty in ("very_hard", "very hard") and "nemotron-3-ultra" not in model_id:
                 is_outlier = True
-                reason = "Very hard problem not routed to kimi-k2.6"
+                reason = "Very hard problem not routed to nemotron-3-ultra"
 
             if is_outlier:
                 outliers.append(

@@ -22,20 +22,20 @@
   total_params: 117
   active_params: 5.1
 
-"deepseek/deepseek-v4-flash:free":
+"qwen/qwen3-coder:free":
   source: OpenRouter 
   source_url: https://openrouter.ai/
   description: > 
     Very, very expensive and very competent. The reasoning and coding abilities of this model are 
     an entry level worker when it comes to logic and reasoning.
-  total_params: 284
-  active_params: 13
+  total_params: 480
+  active_params: 35
 
-"moonshotai/kimi-k2.6:free":
+"nvidia/nemotron-3-ultra-550b-a55b:free":
   source: OpenRouter 
   source_url: https://openrouter.ai/
   description: >
     By far the most powerful model on this list. Only model capable of going toe to toe with frontier lab quality models like Claude Opus. Should only be used when previous models will fail.
     It has a PhD student level of reasoning and logic with massive reasoning capabilities and the ability to iteratively solve a problem.
-  total_params: 1100
-  active_params: 32
+  total_params: 550
+  active_params: 55

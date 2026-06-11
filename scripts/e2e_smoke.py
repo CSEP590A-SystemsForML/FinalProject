@@ -40,8 +40,8 @@ MOCK_ROUTER = {
     "very_easy": "openai/gpt-oss-20b:free",
     "easy": "openai/gpt-oss-20b:free",
     "medium": "openai/gpt-oss-120b:free",
-    "hard": "deepseek/deepseek-v4-flash:free",
-    "very_hard": "moonshotai/kimi-k2.6:free",
+    "hard": "qwen/qwen3-coder:free",
+    "very_hard": "nvidia/nemotron-3-ultra-550b-a55b:free",
 }
 DEFAULT_MODEL = "openai/gpt-oss-120b:free"
 

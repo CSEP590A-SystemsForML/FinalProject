@@ -72,7 +72,7 @@
     description: "Rate of avoiding hallucination among non-correct responses"
     score: 8.8
 
-"deepseek/deepseek-v4-flash:free":
+"qwen/qwen3-coder:free":
   GPQA_Diamond:
     description: "Graduate-level scientific reasoning"
     score: 86.7
@@ -109,7 +109,7 @@
     description: "Rate of avoiding hallucination among non-correct responses"
     score: 10.3
 
-"moonshotai/kimi-k2.6:free":
+"nvidia/nemotron-3-ultra-550b-a55b:free":
   GPQA_Diamond:
     description: "Graduate-level scientific reasoning"
     score: 91.1
