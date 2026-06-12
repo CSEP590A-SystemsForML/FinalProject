@@ -15,8 +15,13 @@ async def main_loop(
     limit,
     problem_id,
     domain,
+    routing_strategy,
+    id_min,
+    id_max,
 ):
-    problem_set_manager = ProblemSetManager(limit=limit, problem_id=problem_id, domain=domain)
+    problem_set_manager = ProblemSetManager(
+        limit=limit, problem_id=problem_id, domain=domain, id_min=id_min, id_max=id_max
+    )
     logic_manager = LogicManager(
         prompt_type=prompt_type,
         max_active=max_active,
@@ -24,6 +29,7 @@ async def main_loop(
         run_id=run_id,
         max_attempts=max_attempts,
         local_model_solves=local_model_solves,
+        routing_strategy=routing_strategy,
     )
     queue_sem = asyncio.Semaphore(max_active + 1)
     tasks = set()
@@ -97,9 +103,31 @@ def build_parser():
         help="Only process the problem with this problem_id. Useful for deterministic smoke tests.",
     )
     parser.add_argument(
+        "--id-min",
+        type=int,
+        default=None,
+        help="Only process problems with problem_id >= this value (inclusive). Pair with --id-max to demo a slice.",
+    )
+    parser.add_argument(
+        "--id-max",
+        type=int,
+        default=None,
+        help="Only process problems with problem_id <= this value (inclusive), e.g. --id-max 1150 to trim a large set.",
+    )
+    parser.add_argument(
         "--domain",
         default=None,
         help="Only process problems from this domain (e.g. code, math, reasoning). Default: all domains.",
+    )
+    parser.add_argument(
+        "--strategy",
+        choices=["confidence", "ladder", "difficulty", "legacy"],
+        default="confidence",
+        help=(
+            "Resolution strategy the server runs: 'confidence'/'ladder' (confidence-routed "
+            "start rung + gradual ladder escalation) or 'difficulty'/'legacy' (router pick, "
+            "escalate once to the strongest model). Default: confidence."
+        ),
     )
     parser.add_argument(
         "--test",
@@ -137,5 +165,8 @@ if __name__ == "__main__":
                 limit=args.limit,
                 problem_id=args.problem_id,
                 domain=args.domain,
+                routing_strategy=args.strategy,
+                id_min=args.id_min,
+                id_max=args.id_max,
             )
         )

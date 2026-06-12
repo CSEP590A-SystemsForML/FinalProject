@@ -59,9 +59,28 @@ class SolveRequest(BaseModel):
     answer: str | None = Field(default=None, description="Expected answer or reference answer.")
     verify: str = Field(default="match", description="Validation mode: match, tests, judge, or heuristic.")
     difficulty: str = Field(default="unknown", description="Problem difficulty label.")
-    model_id: str = Field(..., description="Router-selected external model id.")
+    model_id: str = Field(..., description="Router-selected external model id (the starting rung).")
     router_reasoning: str | None = Field(default=None, description="Router reasoning for choosing model_id.")
-    max_attempts: int = Field(default=2, ge=1, description="Maximum attempts before escalation/failure.")
+    difficulty_pred: str | None = Field(
+        default=None,
+        description="Router's difficulty inferred from the prompt alone (very_easy..very_hard); independent of the dataset 'difficulty' label.",
+    )
+    confidence: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Router's confidence in [0,1] that model_id solves the problem. Low confidence raises the starting rung.",
+    )
+    routing_strategy: str | None = Field(
+        default=None,
+        description=(
+            "Which resolution strategy to run: 'confidence' (confidence-routed start "
+            "rung + gradual ladder escalation + ground-truth-optional acceptance) or "
+            "'difficulty' (legacy: use the router's model pick, escalate once to the "
+            "strongest model on failure). None uses the server default."
+        ),
+    )
+    max_attempts: int = Field(default=2, ge=1, description="Maximum attempts per model rung before escalating up the ladder.")
     category: str | None = Field(default=None, description="Optional problem category, e.g. math, code, web.")
     assert_cases: str | None = Field(default=None, description="Optional assert cases for code validation.")
     source_url: str | None = Field(default=None, description="Optional source URL for web/factual problems.")

@@ -14,6 +14,12 @@ from openai import AsyncOpenAI
 VALID_VERIFY_MODES = {"match", "tests", "judge", "heuristic"}
 VALID_DIFFICULTIES = {"very_easy", "easy", "medium", "hard", "very_hard"}
 
+# Cap the router model's output tokens. The router only emits a short JSON
+# routing decision, and the local router model's context is small (granite =
+# 8192). Requesting the full context as output leaves no room for the prompt
+# and the server rejects it (400). Override with ROUTER_MAX_OUTPUT_TOKENS.
+ROUTER_MAX_OUTPUT_TOKENS = int(os.environ.get("ROUTER_MAX_OUTPUT_TOKENS", "2048"))
+
 
 def validate_problem_set(problem_set: pd.DataFrame) -> None:
     """
@@ -104,8 +110,14 @@ def _domains_dir() -> Path:
 
 
 def available_domains() -> list[str]:
-    """Domain names with a built dataset file, sorted for deterministic loading."""
-    return sorted(p.stem for p in _domains_dir().glob("*.json"))
+    """Domain names with a built dataset file, sorted for deterministic loading.
+
+    Dotfiles (e.g. macOS AppleDouble "._*.json" resource forks left by scp) are
+    ignored so they cannot masquerade as a domain.
+    """
+    return sorted(
+        p.stem for p in _domains_dir().glob("*.json") if not p.name.startswith(".")
+    )
 
 
 def load_domain_problems(domain: str | None) -> pd.DataFrame:
@@ -147,6 +159,8 @@ class ProblemSetManager:
         limit: int | None = None,
         problem_id: int | None = None,
         domain: str | None = None,
+        id_min: int | None = None,
+        id_max: int | None = None,
     ) -> None:
         self.problem_set = load_domain_problems(domain)
         if "problem_id" not in self.problem_set.columns:
@@ -158,6 +172,22 @@ class ProblemSetManager:
             self.problem_set = self.problem_set[self.problem_set["problem_id"] == problem_id]
             if self.problem_set.empty:
                 raise ValueError(f"No problem found with problem_id={problem_id}")
+
+        # Inclusive problem_id range filter, e.g. demo a slice with --id-min/--id-max.
+        # Applied before the shuffle so the slice is a stable set of problems.
+        if id_min is not None or id_max is not None:
+            lo = id_min if id_min is not None else float("-inf")
+            hi = id_max if id_max is not None else float("inf")
+            if id_min is not None and id_max is not None and id_min > id_max:
+                raise ValueError(f"--id-min ({id_min}) must be <= --id-max ({id_max})")
+            self.problem_set = self.problem_set[
+                (self.problem_set["problem_id"] >= lo) & (self.problem_set["problem_id"] <= hi)
+            ]
+            if self.problem_set.empty:
+                raise ValueError(
+                    f"No problems with problem_id in [{id_min}, {id_max}]"
+                    + (f" for domain={domain}" if domain else "")
+                )
 
         self.problem_set = self.problem_set.sample(
             frac=1,
@@ -230,7 +260,7 @@ class LocalInferenceManager:
                 model=self.model,
                 messages=messages,
                 temperature=0,
-                max_completion_tokens=8192,
+                max_completion_tokens=ROUTER_MAX_OUTPUT_TOKENS,
                 stop=[
                     "<|endoftext|>",
                 ],
@@ -243,7 +273,8 @@ class LocalInferenceManager:
                     "role": "user",
                     "content": (
                         "Look at your own logic. Do you believe a student of the level as described in the model description is capable of this? "
-                        "Emit your final response in the same format and revise your reasoning and model_id if you believe you have made a mistake."
+                        "Re-examine your inferred difficulty and how confident you really are. "
+                        "Emit your final response in the same format and revise your reasoning, difficulty, confidence, and model_id if you believe you have made a mistake."
                     ),
                 }
             )
@@ -251,7 +282,7 @@ class LocalInferenceManager:
                 model=self.model,
                 messages=messages,
                 temperature=0,
-                max_completion_tokens=8192,
+                max_completion_tokens=ROUTER_MAX_OUTPUT_TOKENS,
                 stop=[
                     "<|endoftext|>",
                 ],
@@ -294,12 +325,14 @@ class LogicManager:
         run_id: str,
         max_attempts: int,
         local_model_solves: bool = False,
+        routing_strategy: str | None = None,
     ) -> None:
         self.inference_manager = LocalInferenceManager(max_active)
         self.resolution_server = ResolutionServerClient(server_url)
         self.run_id = run_id
         self.max_attempts = max_attempts
         self.local_model_solves = local_model_solves
+        self.routing_strategy = routing_strategy
         self.models_config = {}
         self._init_routing_prompt(prompt_type)
 
@@ -371,11 +404,31 @@ class LogicManager:
             if stripped in self.valid_model_ids:
                 return stripped
 
-        fallback_model = "moonshotai/kimi-k2.6:free"
+        fallback_model = "nvidia/nemotron-3-ultra-550b-a55b:free"
         if fallback_model in self.valid_model_ids:
             return fallback_model
 
         return next(iter(self.valid_model_ids))
+
+    @staticmethod
+    def _coerce_confidence(value) -> float | None:
+        """Parse the router's self-reported confidence into a [0, 1] float."""
+        if value is None:
+            return None
+        try:
+            conf = float(value)
+        except (TypeError, ValueError):
+            return None
+        if conf != conf:  # NaN guard
+            return None
+        return max(0.0, min(1.0, conf))
+
+    @staticmethod
+    def _coerce_difficulty(value) -> str | None:
+        if not value:
+            return None
+        difficulty = str(value).strip().lower()
+        return difficulty if difficulty in VALID_DIFFICULTIES else None
 
     def _build_solve_payload(self, request: dict, router_response: dict) -> dict:
         model_id = self._normalize_model_id(router_response.get("model_id"))
@@ -395,6 +448,9 @@ class LogicManager:
             "validator": None if pd.isna(request.get("validator")) else request.get("validator"),
             "model_id": model_id,
             "router_reasoning": None if reasoning is None else str(reasoning),
+            "difficulty_pred": self._coerce_difficulty(router_response.get("difficulty")),
+            "confidence": self._coerce_confidence(router_response.get("confidence")),
+            "routing_strategy": self.routing_strategy,
             "max_attempts": self.max_attempts,
         }
 

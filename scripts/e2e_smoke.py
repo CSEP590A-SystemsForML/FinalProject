@@ -40,8 +40,8 @@ MOCK_ROUTER = {
     "very_easy": "openai/gpt-oss-20b:free",
     "easy": "openai/gpt-oss-20b:free",
     "medium": "openai/gpt-oss-120b:free",
-    "hard": "deepseek/deepseek-v4-flash:free",
-    "very_hard": "moonshotai/kimi-k2.6:free",
+    "hard": "qwen/qwen3-coder:free",
+    "very_hard": "nvidia/nemotron-3-ultra-550b-a55b:free",
 }
 DEFAULT_MODEL = "openai/gpt-oss-120b:free"
 
@@ -74,13 +74,18 @@ def load_domain_files(domain: str | None) -> dict[str, list[dict]]:
         raise SystemExit(
             f"No domain datasets in {DOMAINS_DIR}. Run: python local-inference/problems/build.py"
         )
+    # Ignore dotfiles such as macOS AppleDouble "._*.json" resource forks, which
+    # scp-from-Mac leaves next to the real datasets and are not valid UTF-8 JSON.
+    domain_files = sorted(
+        p for p in DOMAINS_DIR.glob("*.json") if not p.name.startswith(".")
+    )
     if domain:
         path = DOMAINS_DIR / f"{domain}.json"
         if not path.exists():
-            available = sorted(p.stem for p in DOMAINS_DIR.glob("*.json"))
+            available = sorted(p.stem for p in domain_files)
             raise SystemExit(f"Unknown domain '{domain}'. Available: {available}")
-        return {domain: json.loads(path.read_text())}
-    return {p.stem: json.loads(p.read_text()) for p in sorted(DOMAINS_DIR.glob("*.json"))}
+        return {domain: json.loads(path.read_text(encoding="utf-8"))}
+    return {p.stem: json.loads(p.read_text(encoding="utf-8")) for p in domain_files}
 
 
 def sample_problems(domain: str | None, per_domain: int) -> list[dict]:

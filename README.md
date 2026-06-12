@@ -15,6 +15,38 @@ Requires **Python 3.12**.
 ./install.sh colab   # Colab / TPU (vllm-tpu)
 ```
 
+## One-shot: provision → analysis on a new VM
+
+`scripts/bootstrap_vm.sh` takes a freshly provisioned instance from zero to a full
+analysis in one command: install deps (into a venv) → launch the vLLM router +
+FastAPI server → wait for health → run the **same** problem set through **both
+routing strategies** (`difficulty`/legacy and `confidence`/ladder) → emit comparison
+tables + plots.
+
+```bash
+# Live A/B (real models): set a key first.
+API_TOKEN=sk-or-... scripts/bootstrap_vm.sh
+
+# No key / CI / no accelerator: runs the deterministic in-process e2e instead,
+# so you still get a populated metrics DB + analysis.
+MODE=smoke scripts/bootstrap_vm.sh
+```
+
+Outputs land in `server/metrics/outputs/` (CSV tables + `cost_*.png` plots); the
+two live runs are `<RUN_TAG>_difficulty` and `<RUN_TAG>_confidence` (compare them in
+`run_summary.csv`). Key env-var overrides:
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `MODE` | `live` if a key is set, else `smoke` | live A/B vs. deterministic e2e |
+| `SERVE` | `all` | `all`=router+server, `server`=only FastAPI (reuse a shared router via `ROUTER_BASE_URL`), `none`=both already up |
+| `PER_DOMAIN` / `DOMAINS` | `8` / `math,reasoning,factual,code` | benchmark scope |
+| `RUN_TAG` | `ab` | run_id prefix for the two strategy runs |
+| `INSTALL_TARGET` | auto (`mac`/`colab`) | which `requirements/*.txt` extra to install |
+
+See `run.sh --help` for router/accelerator vars (`DTYPE`, `ACCEL`, ports), which the
+bootstrap passes through.
+
 ## Configure
 
 The resolution server calls external models through an OpenAI-compatible provider (OpenRouter by default). Set a key in `server/.env` or your shell:
@@ -60,6 +92,56 @@ python local-inference/main.py --run-id caveman_001 --server-url http://localhos
 Available flags (see `create_run.py --help`): `--baseline`, `--caveman`, `--capabilities-prompt`,
 `--web-search-compression`, `--local-model-solves`, `--quantized-local-lm`, `--quantized-kv-cache`,
 `--long-context-compression-lemma`, `--long-context-compression-ai`.
+
+## Run on the `lab-2` Cloud TPU
+
+The router is hosted on a Cloud TPU VM (`lab-2`, a `v5litepod-1` / TPU v5e).
+
+```bash
+# From a machine with gcloud, authed on the project that owns lab-2:
+gcloud compute tpus tpu-vm ssh lab-2 --zone=us-west1-c
+
+# On the VM (first time):
+git clone <repo-url> && cd FinalProject
+./install.sh colab          # installs vllm-tpu
+export API_TOKEN=sk-...      # OpenRouter key for the solver models
+
+# Launch: run.sh auto-detects the TPU (/dev/accel0) and adds --device tpu.
+./run.sh                     # bf16 router + fp8 kv-cache (supported on v5e)
+HOST=0.0.0.0 ./run.sh        # if driving it from off-box
+```
+
+TPU notes (handled automatically by `run.sh`, see `ACCEL` in `./run.sh --help`):
+- `--device tpu` is added when a TPU is detected.
+- `--kv-cache-dtype fp8` works on TPU v5+ (vLLM ≥ 0.10), so `--quantized-kv-cache` is fine.
+- `DTYPE=fp8 ./run.sh` (the `--quantized-local-lm` weight-quant path) maps to `tpu_int8`
+  on v5e, since fp8 *weights* need a v6e/Ironwood chip.
+
+## Profile vLLM throughput
+
+Cost is one axis of profiling; serving **throughput** is the other. These tools
+measure how fast the local router model serves, and how much quantization buys.
+
+```bash
+# Profile whatever router is currently running (no API key needed):
+python scripts/profile_vllm.py --num-requests 64 --concurrency 8 --max-tokens 256
+#   reports: output tok/s, total tok/s, requests/s, latency p50/p95/p99,
+#            TTFT + TPOT (streaming), plus a best-effort vLLM /metrics scrape.
+#   --out report.json     persist the full report
+#   --no-stream           end-to-end only (skip TTFT/TPOT)
+
+# Sweep quantization configs end-to-end (restarts the router per config):
+scripts/profile_quant_sweep.sh
+#   default CONFIGS="bf16:false bf16:true fp8:true" (DTYPE:QUANTIZE_KV_CACHE)
+#   prints a tok/s + speedup comparison table and writes /tmp/vllm_profile/summary.json
+#   CONFIGS="bf16:true fp8:true" NUM_REQUESTS=128 CONCURRENCY=16 scripts/profile_quant_sweep.sh
+```
+
+`profile_vllm.py` sets `ignore_eos` so every request emits exactly `--max-tokens`
+output tokens, giving a clean decode-throughput measurement. Each report is tagged
+with the active `DTYPE` / `QUANTIZE_KV_CACHE` / `ACCEL` so runs are comparable. On
+TPU v5e, `fp8` maps to `tpu_int8` (handled by `run.sh`). To profile only the router
+without the FastAPI server, use `LAUNCH=router ./run.sh`.
 
 ## End-to-end smoke test (no GPU / no API key)
 
