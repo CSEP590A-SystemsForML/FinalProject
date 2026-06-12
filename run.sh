@@ -141,12 +141,11 @@ VLLM_CMD=(
     --download-dir /tmp
     --max-model-len 8192
     --gpu-memory-utilization 0.95
-    --swap-space 8
     --tensor-parallel-size 1
     --enable-prefix-caching
     --max-num-seqs "$MAX_NUM_SEQS"
     --trust-remote-code
-    --disable-log-requests
+    --no-enable-log-requests
     --reasoning-parser qwen3
     --dtype bfloat16
 )
