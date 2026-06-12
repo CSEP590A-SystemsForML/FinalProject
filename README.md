@@ -1,5 +1,7 @@
 # Cost-Optimizing LLM Router
 
+📄 **[Final Report (PDF)](CSEP590A_SystemsForML_FinalProject-1.pdf)**
+
 A benchmark harness that measures **which optimizations reduce the cost of solving a problem set**. A small, locally-hosted model routes each problem to the cheapest external model likely to solve it; a separate server solves, validates, escalates on failure, and records all metrics.
 
 - System overview: [`docs/architecture.md`](../docs/architecture.md)
