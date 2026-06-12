@@ -81,6 +81,13 @@ class SolveRequest(BaseModel):
         ),
     )
     max_attempts: int = Field(default=2, ge=1, description="Maximum attempts per model rung before escalating up the ladder.")
+    pin_model: bool = Field(
+        default=False,
+        description=(
+            "If true, resolve using ONLY model_id with no ladder escalation. Used to "
+            "measure individual-model accuracy baselines for router ablation studies."
+        ),
+    )
     category: str | None = Field(default=None, description="Optional problem category, e.g. math, code, web.")
     assert_cases: str | None = Field(default=None, description="Optional assert cases for code validation.")
     source_url: str | None = Field(default=None, description="Optional source URL for web/factual problems.")

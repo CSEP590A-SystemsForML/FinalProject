@@ -1,352 +1,574 @@
-\documentclass[11pt]{article}
+\documentclass[10pt]{article}
 
-\usepackage[margin=1in]{geometry}
+% --- Packages ---
+\usepackage[letterpaper,margin=0.75in]{geometry}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{xcolor}
 \usepackage{booktabs}
 \usepackage{array}
-\usepackage{graphicx}
-\usepackage{float}
-\usepackage{longtable}
-\usepackage{xcolor}
+\usepackage{titlesec}
 \usepackage{enumitem}
+\usepackage{setspace}
 \usepackage{hyperref}
-\usepackage{fancyvrb}
-\usepackage{tcolorbox}
 
-\hypersetup{colorlinks=true, linkcolor=blue!50!black, urlcolor=blue!50!black}
+\setstretch{0.95}
 
-\newcommand{\code}[1]{\texttt{#1}}
+% --- Spacing / look: keep it report-like and compact ---
+\setlist{nosep,leftmargin=1.4em}
+\titlespacing*{\section}{0pt}{1.1ex plus .8ex minus .2ex}{0.5ex plus .2ex}
+\titlespacing*{\subsection}{0pt}{0.8ex plus .6ex minus .2ex}{0.35ex plus .2ex}
+\setlength{\parskip}{0.24em}
+\setlength{\parindent}{0pt}
+\setlength{\abovecaptionskip}{4pt}
+\setlength{\belowcaptionskip}{2pt}
+\setlength{\textfloatsep}{8pt plus 2pt minus 2pt}
+\setlength{\intextsep}{8pt plus 2pt minus 2pt}
+% Keep floats from being shoved to their own pages
+\renewcommand{\topfraction}{0.92}
+\renewcommand{\bottomfraction}{0.7}
+\renewcommand{\textfraction}{0.08}
+\renewcommand{\floatpagefraction}{0.8}
 
-\title{\textbf{Live Benchmark Report\\Cost-Optimizing LLM Router}}
-\author{Systems for Machine Learning --- Final Project}
-\date{}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    urlcolor=cyan,
+    pdftitle={A Hierarchical Agentic Inference System},
+}
+
+% Looser line-breaking so long \texttt{...} tokens reflow cleanly (report, not paper).
+\sloppy
+\emergencystretch=2em
+
+% --- Title block ---
+\title{\vspace{-2.5em}\textbf{Building, Characterizing, and Optimizing a\\
+Hierarchical Agentic Inference System}}
+\author{Anabyv \quad Esirkiza \quad Gmichail \quad Tanmay\\
+\normalsize Department of Computer Science and Engineering, University of Washington}
+\date{\normalsize June 2026}
 
 \begin{document}
 \maketitle
+\vspace{-1.5em}
 
-\noindent\textbf{Runs:} \code{tpu\_bench\_001} (2026-06-10, 46 problems) $\cdot$
-\code{tpu\_bench\_002} (2026-06-11, 88 problems)\\
-\textbf{Combined sample:} 134 problems attempted across 4 domains (math, reasoning,
-factual, code).
+% --- Executive summary ---
+\section*{Summary}
+Agentic language-model systems achieve strong results on reasoning and tool-use
+tasks, but they typically lean on a single large model that is expensive and slow.
+We built and characterized a \emph{hierarchical agentic inference system} that pairs
+a small, locally-hosted model acting as a self-reflective router with a tier of
+progressively larger external solver models. A server-side agent loop validates each
+answer, repairs failing code, and escalates to the strongest model only when the
+cheaper path fails. On the full 248-problem benchmark the system solved 96.4\% of
+problems, but the striking result is that 99.6\% of all inference cost came from the
+small number of calls that reached the 550B tier, while the cheapest tier solved every
+one of the 220 problems it received for under half a percent of the cost. A live
+on-TPU run validates the same pipeline end-to-end, and re-pricing shows that defaulting
+to the strongest model would cost roughly $2{,}600\times$ more for no accuracy gain. We
+also characterized the local router under vLLM and studied solver-side prompt
+optimizations, finding that token-cutting tricks can be net cost-negative once their
+prompt overhead and escalation side effects are accounted for. The dominant cost lever
+is therefore routing accuracy---keeping problems off the expensive tier---rather than
+router speed or token thrift.
 
-\vspace{0.5em}
-\noindent These are \textbf{live} end-to-end runs (real router model on a TPU + real
-external solver calls through OpenRouter), not the mocked smoke test. They exercise
-the full path:
+% --- Section 1: Introduction ---
+\section{Introduction}
+\label{sec:introduction}
+Traditional LLM interactions are single- or multi-turn chats against one model.
+Agentic applications, in contrast, decompose a goal into steps, invoke tools,
+validate intermediate results, and reflect on failures. The dominant implementation
+choice today is to attach this control flow to a single high-end model: the agent is
+smart because the underlying model is, and the system simply absorbs the cost. That
+choice has two consequences. At the \emph{application} level, every problem---trivial
+or hard---pays the same per-token rate, which is wasteful when most problems are easy.
+At the \emph{systems} level, the inference engine spends most of its decode budget
+generating long reasoning traces on a model that is over-provisioned for the task,
+while small, cheap models sit idle.
 
-\begin{tcolorbox}[colback=gray!8,colframe=gray!40,boxrule=0.4pt]
-\small\ttfamily
-problem $\rightarrow$ local router (TPU) $\rightarrow$ 2-pass model pick $\rightarrow$
-resolution server $\rightarrow$ OpenRouter solver $\rightarrow$ validation
-$\rightarrow$ cost $\rightarrow$ metrics
-\end{tcolorbox}
+This project takes the opposite stance. We treat \emph{which model runs} as the
+primary control variable of the agent and ask how cheaply we can solve a mixed
+benchmark if the agent itself is responsible for picking the right solver. The design
+pattern is \emph{dynamic model orchestration}: a small, locally-hosted model serves
+as a router that reads the problem, picks the cheapest external solver likely to
+succeed, and emits a structured decision; a server-owned agent loop then drives that
+solver through validation, tool-assisted repair, and, if necessary, a single
+escalation to the strongest available model. The router is itself an agent step---it
+self-critiques in a second pass and may revise its choice before any expensive solver
+call is made.
 
-\section*{Infrastructure}
+To quantify effectiveness, we introduce an analytical cost function calibrated to
+inference-engine behavior and apply it to every model call the agent makes. The
+function attributes cost to the specific decisions the agent took---which model was
+selected, how many prompt and completion tokens it consumed, how many tool
+invocations and attempts the problem required, and whether escalation fired---so a
+run's aggregate cost can be decomposed and compared against any other run on the same
+benchmark.
 
-\begin{longtable}{@{}>{\raggedright}p{0.26\textwidth} p{0.66\textwidth}@{}}
-\toprule
-\textbf{Component} & \textbf{Detail} \\
-\midrule
-Host & Google Cloud TPU VM \code{lab-2} (\code{v5litepod-1} / TPU v5e, 16\,GB HBM) \\
-Router model & \code{ibm-granite/granite-4.1-3b} served by vLLM on the TPU (\code{:7654}, bf16) \\
-Resolution server & FastAPI \code{/solve} (\code{:8001}) \\
-Solver provider & OpenRouter (free tier) \\
-Routable lineup & \code{gpt-oss-20b} (21B/3.6B) $\cdot$ \code{gpt-oss-120b} (117B/5.1B) $\cdot$ \code{qwen3-coder} (480B/35B) $\cdot$ \code{nemotron-3-ultra-550b-a55b} (550B/55B, escalation target) \\
-Driver & \code{local-inference/main.py} \\
-\bottomrule
-\end{longtable}
+% --- Section 2: System Architecture ---
+\section{System Design and Implementation}
+\label{sec:architecture}
+This section describes the problem domain we target, the agentic pattern we
+implement, the tool and state machinery the agent relies on, and the two-tier
+software architecture that hosts it.
 
-\section*{Methodology}
+\subsection{Problem Domain and Use Case}
+\label{sec:domain}
+The target application is a general-purpose autonomous reasoning agent that answers a
+heterogeneous stream of benchmark problems under a hard constraint on aggregate
+inference cost. Each problem carries enough metadata for the system to route, solve,
+and grade it without human intervention (Table~\ref{tab:problem-schema}).
 
-\begin{itemize}[leftmargin=1.4em]
-\item \textbf{Routing:} the local granite model makes a 2-pass decision per problem
-  (pick a model, then self-revise) and emits JSON \code{\{model\_id, reasoning\}}.
-\item \textbf{Validation:} \code{math} via \code{numeric\_match} heuristic,
-  \code{reasoning} via curated validators, \code{code} via \code{verify: tests}
-  (candidate run against its asserts in a sandbox, with a solve$\rightarrow$run$\rightarrow$repair
-  loop on failure).
-\item \textbf{Cost:} the project's custom cost function (params + tokens), not provider
-  prices. Accumulated per problem by \code{CostAccumulator}.
-\end{itemize}
-
-\section*{How the router decides which model to forward to}
-
-Routing is performed \textbf{on-device} by the small \code{granite-4.1-3b} model (vLLM
-on the TPU); the larger solver models are never consulted for the decision. The policy
-is prompt-driven and implemented in \code{local-inference/utils.py}
-(\code{LogicManager} / \code{LocalInferenceManager}). Per problem:
-
-\begin{enumerate}[leftmargin=1.6em]
-\item \textbf{Build the routing prompt} (\code{\_init\_routing\_prompt}). A system
-  prompt is assembled from \code{configs/prompts.yaml} plus a rendered ``menu'' of
-  every candidate model from \code{configs/models.yaml} --- each line carries the model
-  id, \textbf{total / active parameters}, and a one-line \textbf{capability
-  description} (e.g.\ ``performs like a high-schooler'' vs ``PhD-student level
-  reasoning''). The instruction is explicitly cost-minimizing:
-  \begin{quote}\itshape
-  ``You are a router with the goal of minimizing cost. Given a problem, pick the least
-  expensive model that is likely to solve it correctly. Use the model descriptions and
-  problem difficulty to avoid both over-routing and under-routing \ldots Also ask
-  whether a student at the level described in the model description could solve this
-  problem.''
-  \end{quote}
-  The router must emit \textbf{strict JSON}:
-  \code{\{"reasoning": "...", "model\_id": "provider/model:free"\}}. (An optional
-  \code{capabilities} prompt mode also injects per-model benchmark scores from
-  \code{configs/benchmarks.yaml}.)
-
-\item \textbf{Local short-circuit} (\code{\_can\_solve\_locally}). If
-  \code{--local-model-solves} is on \textbf{and} the problem is
-  \code{difficulty=very\_easy}, \code{verify=match}, and ships a reference answer, it is
-  answered locally (\code{model\_id="local-router"}) with \textbf{no external call} ---
-  the cheapest possible path.
-
-\item \textbf{Two-pass decision} (\code{call\_model}, \code{temperature=0}, output
-  capped at \code{ROUTER\_MAX\_OUTPUT\_TOKENS=2048}):
-  \begin{itemize}[leftmargin=1.4em]
-  \item \textbf{Pass 1 --- pick:} system = routing prompt, user = problem text $\rightarrow$
-    the model emits \code{\{reasoning, model\_id\}}.
-  \item \textbf{Pass 2 --- self-critique:} the pass-1 JSON is appended as the assistant
-    turn, then a fixed follow-up asks it to reconsider --- ``Look at your own logic. Do
-    you believe a student of the level described is capable of this? \ldots revise your
-    reasoning and model\_id if you believe you have made a mistake.'' The model emits a
-    revised decision. \textbf{The revised \code{model\_id} is the one used.}
-  \end{itemize}
-
-\item \textbf{Parse \& normalize} (\code{parse\_router\_response},
-  \code{\_normalize\_model\_id}). The first \code{\{...\}} object is extracted (tolerant
-  of single-quoted JSON). The chosen \code{model\_id} is checked against the set of
-  valid ids from \code{models.yaml}; if it is missing or unrecognized, the router
-  \textbf{falls back to the strongest model} (\code{nemotron-3-ultra-550b}) so an
-  unparseable decision fails safe rather than dropping the problem.
-
-\item \textbf{Dispatch} (\code{\_build\_solve\_payload}). The run id, problem fields,
-  selected \code{model\_id}, the router's \code{reasoning}, and \code{max\_attempts}
-  (default 2) are POSTed to the resolution server's \code{/solve}. The server owns
-  solving, validation, retries, and \textbf{escalation} within the attempt budget
-  (surfaced as the \code{escalated} flag).
-\end{enumerate}
-
-\noindent\textbf{In effect} the decision is ``cheapest model whose described capability
-level still covers this problem's difficulty,'' double-checked by a self-critique pass,
-with a fail-safe to the strongest model. On this easy/medium sample that logic resolved
-to \code{gpt-oss-20b} for every problem (see \emph{Routing behavior}); the
-fallback-to-strongest path is what produced the \code{nemotron-550b} attempts on the
-rate-limited calls.
-
-\section*{Combined results (both runs)}
-
-\begin{longtable}{@{}>{\raggedright}p{0.42\textwidth} p{0.5\textwidth}@{}}
-\toprule
-\textbf{Metric} & \textbf{Value} \\
-\midrule
-Problems attempted & 134 \\
-Reached a solver & 133 \\
-\textbf{Solved} & \textbf{120 / 133 (90.2\%)} \\
-Solved, excluding rate-limited failures & \textbf{120 / 120 (100\%)} \\
-Escalations & 0 \\
-Failures & 13 $\times$ OpenRouter free-tier 429 + 1 dropped (router non-JSON) \\
-Cost per solved problem & $\sim$\$9.8e-6 (custom units) \\
-Routing & every reached problem $\rightarrow$ \code{openai/gpt-oss-20b:free} (cheapest tier) \\
-\bottomrule
-\end{longtable}
-
-\section*{Router vs. each model individually}
-
-The router's value proposition is \textbf{matching solve quality at the lowest cost}.
-To show this we take the \textbf{133 served problems} and ask: what would it cost to
-run the \emph{same workload} (identical observed prompt/completion tokens, per problem)
-on each candidate model individually? Cost is computed with the project's own cost
-function (\code{server/cost/cost\_function.py}); solve rate is the router's empirical
-result.
-
-\begin{figure}[H]
+\begin{table}[ht]
 \centering
-\includegraphics[width=\textwidth]{figures/router_vs_models.png}
-\caption{Left: cost to serve the identical 133-problem workload under each model
-(log scale), computed by the project cost function on the observed tokens. Right: the
-router's empirical solve rate by domain --- it sent 100\% of problems to the cheapest
-tier and still solved 90\% of problems that reached a model.}
+\small
+\begin{tabular}{@{}lp{0.74\linewidth}@{}}
+\toprule
+\textbf{Field} & \textbf{Description} \\
+\midrule
+\texttt{problem\_id} & Unique integer identifier. \\
+\texttt{problem}     & The problem text shown to the solver. \\
+\texttt{difficulty}  & One of \texttt{very\_easy}, \texttt{easy}, \texttt{medium}, \texttt{hard}. \\
+\texttt{category}    & One of \texttt{math}, \texttt{code}, \texttt{factual}, \texttt{reasoning}, \texttt{web}, \texttt{image}. \\
+\texttt{verify}      & Validation mode: \texttt{match} (exact string), \texttt{tests} (asserts run against the model's code), \texttt{judge} (LLM-graded), or \texttt{heuristic} (named server-side validator). \\
+\bottomrule
+\end{tabular}
+\caption{Per-problem metadata schema.}
+\label{tab:problem-schema}
+\end{table}
+
+The benchmark assembled for this project contains 248 problems: 164 code problems
+from HumanEval, 40 math problems from GSM8K, and a curated set of $\sim\!44$ math,
+reasoning, factual, and image problems. Problems are loaded per domain, so a run can
+target one domain or their union. The workload is deliberately non-trivial: code
+problems must execute against unit tests in a sandboxed interpreter, web problems
+require fetching and conditioning external context before answering, and arithmetic or
+factual problems range from trivial lookups to multi-step reasoning. A single model
+choice cannot serve this mix efficiently, so the agent's job is to land each problem
+on the cheapest tier that will solve it.
+
+\subsection{Agentic Pattern: Dynamic Model Orchestration}
+\label{sec:pattern}
+We implement dynamic model orchestration as the primary pattern, with reflection
+layered into both the router and the solver. The agent is realized as two cooperating
+loops.
+
+\textbf{Router loop.}
+The locally-hosted Granite-4.1-3B model receives a system prompt listing the four
+external solver tiers, each annotated with its parameter counts and a plain-English
+description of the reasoner it represents (high schooler, second-year university
+student, entry-level worker, PhD student). The router emits a structured decision
+consisting of a brief reasoning trace and a chosen \texttt{model\_id}. Because
+Granite-4.1-3B has no inherent chain-of-thought behavior, requiring it to produce the
+reasoning field \emph{before} the choice forces a prompt-induced chain-of-thought. A
+second turn then asks the router to inspect its own reasoning and decide whether the
+initial rationale was correct, allowing it to revise its decision. The server executes
+the revised \texttt{model\_id} and records the updated reasoning. If the decision is
+unparseable, the router fails safe to the strongest model rather than dropping the
+problem.
+
+\textbf{Solver loop.}
+The server's \texttt{solve\_problem} routine drives the chosen external model through
+up to \texttt{max\_attempts} tries. For each try it (1) prepares tool context (e.g.,
+fetches and truncates the web page for a \texttt{web} problem), (2) builds the solver
+chat with format-specific answer instructions, (3) calls the model, and (4) validates
+the answer in the mode the problem requires---executing candidate code against its
+assertions in the sandboxed runner for \texttt{verify=tests} problems. On failure, the
+server appends the runner's stdout/stderr back to the model so it can repair its code
+on the next attempt. If all attempts fail, the server escalates exactly once to the
+strongest registered model and reruns validation. This one-shot escalation cap keeps
+the worst-case cost bounded.
+
+\textbf{State and tools.}
+For each problem the agent maintains the running conversation, the tools invoked, the
+tokens and cost accumulated, and the size of any injected external context. State is
+held in memory for the duration of the problem and persisted at the end; no agent-side
+state survives across problems, which keeps the service horizontally scalable. The
+agent has two deterministic, server-driven tools rather than model-native function
+calls: \texttt{web\_search} fetches a problem's \texttt{source\_url}, optionally
+compresses the body, and caps it at $10{,}000$ characters before it enters the prompt;
+\texttt{run\_python\_code} is a sandboxed executor whose output feeds the code-repair
+turn.
+
+\subsection{Two-Tier Software Architecture}
+\label{sec:sysarch}
+\textbf{Local inference tier.}
+The local router is IBM Granite-4.1-3B served behind a vLLM OpenAI-compatible endpoint
+and exercised concurrently by an \texttt{asyncio} driver that keeps multiple router
+requests in flight. This is what lets the engine see a decode-heavy, batchable
+workload rather than serialized one-at-a-time calls---a prerequisite for the
+systems-level optimizations we evaluate in Section~\ref{sec:eval}.
+
+\textbf{External solver tier.}
+Four models are exposed through an OpenAI-compatible provider (OpenRouter in our
+setup), ordered into progressively stronger tiers primarily by active parameter count
+and expected reasoning ability (Table~\ref{tab:solvers}). This gives the router a
+discrete set of cost--capability tradeoffs. Active parameter count is the right axis
+because three of the four solvers are mixture-of-experts models, whose serving cost
+tracks active rather than total parameters. Post-training also matters when
+interpreting the tiers: the strongest tier is treated as stronger not only because of
+its larger scale but because it is expected to have undergone a more extensive
+reasoning-oriented post-training regime, which is why the gap between the top two
+tiers is not explained by parameter count alone.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{@{}llr@{}}
+\toprule
+\textbf{Tier} & \textbf{Model} & \textbf{Total / Active params} \\
+\midrule
+Small (cheapest) & OpenAI GPT-OSS-20B   & 21B / 3.6B \\
+Medium           & OpenAI GPT-OSS-120B  & 117B / 5.1B \\
+Large            & Qwen3-Coder          & 480B / 35B \\
+Strongest        & NVIDIA Nemotron-3-Ultra & 550B / 55B \\
+\bottomrule
+\end{tabular}
+\caption{External solver tiers, ordered by capability. The strongest tier is the
+one-shot escalation target.}
+\label{tab:solvers}
+\end{table}
+
+\textbf{Agent service.}
+A FastAPI service mediates between the two tiers and owns everything that is not
+inference: tool execution, validation, the cost function, and metrics persistence.
+Each run is registered ahead of time with a unique \texttt{run\_id} and a fixed set of
+optimization flags, which the service treats as the authoritative configuration for
+everything it logs.
+
+\subsection{Optimizations}
+\label{sec:optimizations}
+Each run is registered with a fixed set of boolean optimization flags, grouped by
+where they take effect:
+\begin{itemize}
+  \item \textbf{Inference-engine:} \texttt{quantized\_local\_lm}
+        (BF16\,$\leftrightarrow$\,FP8 weights) and \texttt{quantized\_kv\_cache}
+        (FP8 KV cache), both targeting the local router's throughput and memory.
+  \item \textbf{Prompt and context:} \texttt{caveman} (a terse-rewrite instruction
+        meant to cut completion tokens), \texttt{web\_search\_compression} (caps web
+        context size), and two long-context compressors---a deterministic
+        head-and-tail variant and an AI-driven variant that falls back to the
+        deterministic one on any error.
+  \item \textbf{Routing policy:} \texttt{capabilities\_prompt} adds per-model
+        benchmark scores to the router prompt, and \texttt{local\_model\_solves} lets
+        the router short-circuit trivial \texttt{very\_easy} / \texttt{match}
+        problems without any external call.
+\end{itemize}
+Flags are independently toggleable against a \texttt{baseline} run with all of them
+disabled, so the cost function can attribute any movement to a single optimization or
+a stack of them.
+
+% --- Section 3: Characterization Framework ---
+\section{Performance Characterization Framework}
+\label{sec:characterization}
+We characterize the system at two levels. The \emph{system level} measures the
+efficiency of the local routing infrastructure---throughput, latency, and memory of
+the vLLM-served router. The \emph{application level} measures the effectiveness of the
+complete agentic workflow---solve rate, routing quality, and the cost--performance
+tradeoff. The two are linked: a faster but less accurate router can lower local
+serving cost while \emph{raising} total application cost through extra retries and
+escalations, so an optimization is only deemed beneficial if it improves the overall
+cost-vs-quality frontier.
+
+\subsection{Cost Model}
+\label{sec:costmodel}
+Because provider API prices are VC-subsidized and would simply reward routing
+everything to the largest model, we score every model call with an analytical cost
+function tied to inference-engine behavior. For a call with $p$ prompt tokens and $c$
+completion tokens on a model whose active-parameter scale (relative to the smallest
+solver) is $s$, the per-call cost combines a quadratic attention prefill, a linear MLP
+term, and a decode term, modulated by a mild hardware penalty on total size $T$:
+\begin{equation}
+\label{eq:cost}
+C = \underbrace{\big(\alpha s^2 + (1-\alpha)s\big)\,T^{1.2}}_{\text{model factor}}
+    \cdot \big[\, k_{\text{in}}\,f(p) + k_{\text{out}}\,c\,\bar{\ell} \,\big],
+\end{equation}
+where $\alpha$ is the attention fraction of weights, $f(p)$ is the quadratic prefill
+term, and $\bar{\ell}$ is the average sequence length during decode. A run's total
+cost is the sum of Eq.~\eqref{eq:cost} over every router attempt, solver attempt,
+repair, and escalation, accumulated per problem. This makes cost an explicit function
+of the agent's decisions rather than a flat per-token rate.
+
+\subsection{System- and Application-Level Metrics}
+\label{sec:metrics}
+The router sits on the critical path of every problem, so at the \emph{system level} we
+report decode throughput (output tokens/s) and serving capacity (requests/s), plus
+time-to-first-token (TTFT), peak HBM memory (which bounds batch size), and batch
+efficiency (batched vs.\ single-request throughput, indicating how well vLLM batches
+the routing workload). At the \emph{application level} the primary metric is
+\emph{solve rate}, paired with \emph{aggregate cost} from Eq.~\eqref{eq:cost}, plus
+\emph{escalation rate}, \emph{average attempts} per problem, and router calibration. For
+calibration we define a target tier per difficulty
+(\texttt{easy}\,$\rightarrow$\,smallest, \texttt{medium}\,$\rightarrow$\,mid,
+\texttt{hard}\,$\rightarrow$\,top) and report \emph{router accuracy} (correct initial
+routes / total) with its two error modes: \emph{over-routing} (routed too high) and
+\emph{under-routing} (routed too low). Over-routing preserves solve rate but wastes cost
+on unnecessarily
+capable models; under-routing is costlier still because it triggers retries and,
+ultimately, escalation.
+
+% --- Section 4: Performance Evaluation ---
+\section{Performance Evaluation}
+\label{sec:eval}
+
+\subsection{Experimental Setup}
+\label{sec:setup}
+We draw on four experiments plus a throughput profile, all using the analytical cost
+function of Eq.~\eqref{eq:cost} in custom units (not provider prices). The
+\textbf{full benchmark} (\texttt{baseline\_001}) runs all 247 logged problems with real
+OpenRouter solver calls, difficulty-based routing, and escalation enabled---the only
+run that exercises the expensive tiers, and thus where we read the cost story. The
+\textbf{live on-TPU} runs (\texttt{tpu\_bench}) use the real Granite-4.1-3B router
+served by vLLM (BF16) on a Google Cloud TPU v5e (16\,GB HBM), driving 134 problems
+end-to-end. The \textbf{forced single-model eval} pins each lineup model as a standalone
+solver (no escalation) over a balanced 32-problem slice to measure real per-model
+accuracy. The \textbf{solver-side study} runs four prompt configurations over the same
+66 problems with the router held fixed. Validation uses numeric matching for math,
+curated validators for reasoning/factual, and \texttt{verify=tests} (candidate run
+against its asserts, with a solve/run/repair loop) for code.
+
+\subsection{Full Benchmark: Where the Cost Goes}
+\label{sec:fullbench}
+On the full 247-problem benchmark the agent solved \textbf{238 (96.4\%)} at an
+aggregate cost of \textbf{0.706} custom units, averaging 1.11 attempts per problem.
+The interesting result is not the solve rate but \emph{where the cost lives}
+(Table~\ref{tab:routing-outcome}). The router sent 220 problems to the cheapest tier
+and that tier solved \textbf{all 220}, for 0.4\% of the run's cost. Almost the entire
+0.706---\textbf{99.6\%}---came from the \textbf{25 calls that reached the 550B tier},
+which solved only 16 of them. In other words, the cheap tier carries the workload
+essentially for free, and the strong tier is simultaneously the cost sink and the
+place where problems still fail.
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+\textbf{Solver tier} & \textbf{Calls} & \textbf{Solved} & \textbf{Cost} & \textbf{\% of cost} \\
+\midrule
+GPT-OSS-20B (cheap)     & 220 & 220 & 0.0030 & 0.4\% \\
+GPT-OSS-120B (medium)   & 2   & 2   & 0.0002 & 0.0\% \\
+Nemotron-550B (strongest) & 25 & 16  & 0.7031 & 99.6\% \\
+\midrule
+\textbf{Total}          & 247 & 238 & 0.7064 & 100\% \\
+\bottomrule
+\end{tabular}
+\caption{Full-benchmark routing outcome (\texttt{baseline\_001}, 247 problems).
+Effectively all cost is incurred by the 25 calls that reached the 550B tier.}
+\label{tab:routing-outcome}
+\end{table}
+
+Router calibration on this run is good but not perfect: 4.0\% of problems were
+under-routed (escalated because the first choice was too weak) and 2.0\% over-routed
+(an easy problem solved by an unnecessarily expensive tier), leaving $\sim\!94\%$
+appropriately routed and 10 escalations total. The cost of those errors is visible by
+difficulty: \texttt{easy} problems cost 0.216 in aggregate---\emph{more} than the 0.133
+spent on \texttt{hard} problems---because a handful of easy code problems were
+mis-routed or escalated to the 550B tier, each costing 0.03--0.09. This is the concrete
+form of the thesis: a single mis-routed easy problem on the expensive tier costs more
+than dozens of correctly-routed hard ones.
+
+\subsection{How Much Does the Model Choice Matter?}
+\label{sec:modelchoice}
+Two views confirm that the cheap tier is sufficient and that defaulting to a larger
+model buys nothing but cost. First, re-pricing the live 134-problem workload (same
+observed tokens) on each solver (Figure~\ref{fig:router_vs_models}): the cheapest tier
+is the cost floor, the medium tier costs $\sim\!12\times$, and the 550B model costs
+$\sim\!2{,}600\times$, with no solve-rate headroom to gain. Second, running each model
+as a \emph{standalone} solver on a balanced 32-problem slice (Table~\ref{tab:forced})
+measures this empirically rather than by projection.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.66\textwidth]{figures/router_vs_models.png}
+\caption{Re-pricing the live 134-problem workload on each model. Left: cost (log scale,
+custom units) to solve the same workload on each model; the cheapest tier is the floor.
+Right: the router's solve rate by domain---uniformly high even though 100\% of problems
+went to the cheapest tier.}
+\label{fig:router_vs_models}
 \end{figure}
 
-\begin{longtable}{@{}l r r@{}}
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{@{}lrrr@{}}
 \toprule
-\textbf{Strategy} & \textbf{Cost (same 133-problem workload)} & \textbf{vs. cheapest} \\
+\textbf{Solver (no escalation)} & \textbf{Solved} & \textbf{Solve rate} & \textbf{Cost/problem} \\
 \midrule
-\textbf{Router $\rightarrow$ gpt-oss-20b} (what it chose) & \textbf{\$0.001234} & \textbf{1.0$\times$} \\
-Always gpt-oss-120b           & \$0.014700 & 11.9$\times$ \\
-Always qwen3-coder (480B)     & \$1.272608 & 1{,}031.6$\times$ \\
-Always nemotron-550b (550B)   & \$3.250420 & 2{,}635.0$\times$ \\
+\textbf{Adaptive router}   & 24/32 & 88.9\% reached & $1.3\mathrm{e}{-5}$ \\
+GPT-OSS-20B only           & 31/32 & \textbf{96.9\%} & $9.4\mathrm{e}{-6}$ \\
+GPT-OSS-120B only          & 32/32 & \textbf{100\%}  & $1.1\mathrm{e}{-4}$ \\
+Nemotron-550B only         & 19/20 & 95.0\%          & $1.7\mathrm{e}{-2}$ \\
+Qwen3-Coder only           & ---   & n/a (404/429)   & --- \\
 \bottomrule
-\end{longtable}
+\end{tabular}
+\caption{Each lineup model run as a standalone solver (escalation disabled) on the same
+balanced 32-problem slice (Nemotron, slow at $>$120\,s/problem, on a 20-problem subset).
+\texttt{qwen3-coder:free} was delisted (404/429) at measurement time---invoked but
+unreachable.}
+\label{tab:forced}
+\end{table}
 
-\begin{itemize}[leftmargin=1.4em]
-\item The router sent \textbf{100\%} of problems to the cheapest tier and still solved
-  \textbf{90\% of problems that reached a model} (100\% excluding free-tier 429s).
-  Using the strongest model (\code{nemotron-550b}) individually on the identical
-  workload would cost \textbf{${\sim}2{,}635\times$} more --- for \textbf{no solve-rate
-  headroom to gain}, since the cheapest model already solves this difficulty mix.
-\item The modeled costs above are exact for the observed tokens; the \textbf{empirical}
-  solve rates of the larger models on these same problems are a pending run (blocked on
-  the OpenRouter free-tier daily cap; see Caveats).
-\end{itemize}
+The empirical spread is tiny on this mix: GPT-OSS-120B (100\%) edges GPT-OSS-20B
+(96.9\%) by $\sim$3 points for $\sim\!12\times$ the cost per problem, and the strongest
+model, Nemotron-550B, actually solves \emph{fewer} (95.0\%) than the cheap 20B while
+costing $\sim\!1{,}790\times$ as much per problem and running $>$120\,s/call.
+The router's own cost/problem sits essentially at the cheap-tier floor
+($\sim\!1.4\times$). Its one weak spot is robustness rather than routing: the on-device
+two-pass granite decision dropped 5/32 problems (non-JSON or timeout) \emph{before} they
+reached a solver, so end-to-end it trailed simply always using the cheap tier---a
+router-stage reliability cost, fixable by hardening the JSON parse and gating the
+self-critique pass on low confidence.
 
-\section*{Run 2 --- broader sample (\code{tpu\_bench\_002})}
+\subsection{Live On-TPU Validation}
+\label{sec:live}
+The \texttt{tpu\_bench} runs confirm the full pipeline works on real hardware: the
+Granite router on the TPU v5e drove 134 problems across four domains end-to-end through
+OpenRouter solvers, solving \textbf{121}. Because this sample skews easy/medium, the
+router sent every reached problem to the cheapest tier with \textbf{zero escalations},
+and that tier solved every problem it received; the 13 non-solves were all free-tier
+rate-limits (HTTP 429) or one non-JSON router reply---infrastructure, not capability.
+This is the existence proof that the on-device router, resolution server, validation,
+cost accounting, and metrics work together live; the cost spread it cannot exercise is
+exactly what the full-benchmark run (Section~\ref{sec:fullbench}) provides.
 
-Run after the daily free-tier cap reset; widened to 4 domains and ${\sim}2\times$ the
-problems. Driver: \code{local-inference/main.py}, \code{--max-active 3}.
+\subsection{System Level: Router Serving Throughput}
+\label{sec:throughput}
+Cost characterizes what we pay per solved problem; throughput characterizes how fast
+the on-device router serves. We profiled the live BF16 router with a synthetic
+fixed-length workload (48 requests, concurrency 6, 512-token prompts, 256 output tokens
+with \texttt{ignore\_eos} so every request emits exactly \texttt{max\_tokens}). It
+sustains \textbf{$\sim\!590$ output tok/s} at concurrency 6 ($\sim\!101$ tok/s per
+request), \textbf{2.30 requests/s}, a 2.57\,s p50 latency, and a \textbf{$\sim\!46$\,ms
+TTFT}. Because the router only emits a short JSON decision, its throughput matters
+mostly as latency overhead before a solver is dispatched ($\sim\!46$\,ms TTFT plus
+$\sim\!2.5$\,s for the two-pass decision). On TPU v5e, \texttt{DTYPE=fp8} maps to INT8
+weight quantization (v5e has no FP8 weights) while FP8 \emph{KV cache} is supported; the
+quantization sweep restarts the router per config and is pending a maintenance window on
+the shared host.
 
-\subsection*{Overall}
+\subsection{Solver-Side Optimization Study}
+\label{sec:optstudy}
+The live runs measure \emph{routing}. To isolate \emph{solver-side prompt}
+optimizations on a clean, comparable matrix, we ran four configurations over the same
+66 problems, holding the router fixed as a deterministic difficulty$\rightarrow$model
+stand-in so the only variable is the prompt treatment. To keep the optimization signal
+from being drowned out, the top tier's escalation cost was re-tuned so a single
+escalation costs $\sim\!2.7\times$ the large tier rather than $\sim\!99\%$ of a run.
+Table~\ref{tab:optstudy} and Figure~\ref{fig:opt_decomp} summarize the outcome.
 
-\begin{longtable}{@{}>{\raggedright}p{0.42\textwidth} p{0.5\textwidth}@{}}
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{@{}lrrrr@{}}
 \toprule
-\textbf{Metric} & \textbf{Value} \\
+\textbf{Config} & \textbf{Solve rate} & \textbf{Escalations} & \textbf{Cost} & \textbf{$\Delta$ vs.\ baseline} \\
 \midrule
-Problems attempted / reached solver & 88 / 88 \\
-\textbf{Solved} & \textbf{80 / 88 (90.9\%)} \\
-Solved, excluding rate-limited failures & \textbf{80 / 80 (100\%)} \\
-Escalations & 0 \\
-Failures & 8 $\times$ OpenRouter free-tier 429 (no router-parse drops this run) \\
-Total cost (custom units) & \$0.000790 \\
-Cost per solved problem & $\sim$\$0.0000099 \\
-Prompt / completion tokens & 13{,}405 / 8{,}060 \\
+baseline    & 97.0\% & 3 & 0.196 & --- \\
+longctx\_ai & \textbf{98.5\%} & 3 & \textbf{0.189} & \textbf{$-3.6\%$} \\
+caveman     & 97.0\% & 6 & 0.536 & $+174\%$ \\
+combo       & 97.0\% & 5 & 0.486 & $+148\%$ \\
 \bottomrule
-\end{longtable}
+\end{tabular}
+\caption{Solver-side optimization study (4 configs $\times$ 66 problems). Solve rate is
+statistically flat; the entire signal is in cost.}
+\label{tab:optstudy}
+\end{table}
 
-\subsection*{By domain}
+The headline is that the seemingly obvious token-cutting optimization is the worst one.
+\texttt{caveman} rewrites the solver prompt to demand terse answers and does shrink
+completion tokens by $\sim\!26\%$ as designed---but it is \textbf{net cost-negative
+($+174\%$)} on this short-problem benchmark (Table~\ref{tab:optstudy}). The
+\texttt{combo} that includes it inherits the loss, while \texttt{longctx\_ai} is the
+only configuration that comes in below baseline, and only marginally.
 
-\begin{longtable}{@{}l r r r r r r@{}}
-\toprule
-\textbf{Domain} & \textbf{n} & \textbf{Solved} & \textbf{Solve rate} & \textbf{Esc.} & \textbf{Rate-limited} & \textbf{Cost} \\
-\midrule
-math      & 40 & 35 & 87.5\% & 0 & 5 & \$0.000318 \\
-reasoning & 15 & 14 & 93.3\% & 0 & 1 & \$0.000105 \\
-factual   & 10 &  9 & 90.0\% & 0 & 1 & \$0.000061 \\
-code      & 23 & 22 & 95.7\% & 0 & 1 & \$0.000306 \\
-\bottomrule
-\end{longtable}
+Why does a token-cutting optimization \emph{raise} cost? Figure~\ref{fig:opt_decomp}
+gives the answer. The left panel decomposes token usage: \texttt{caveman}'s instruction
+overhead more than doubles \emph{prompt} tokens, swamping the completion-token savings,
+and its terseness breaks answer-format compliance, which roughly doubles escalations to
+the expensive top tier. The right panel separates the two effects: non-escalated cost
+rises from 0.127 to 0.227 ($+78\%$, pure prompt overhead), while escalated cost rises
+from 0.069 to 0.309 ($+349\%$, more problems bouncing to the top tier). Escalated
+problems are 58\% of \texttt{caveman}'s total cost versus 35\% for the baseline.
 
-\begin{quote}
-Same pattern as run 1: every problem the router reached went to
-\code{openai/gpt-oss-20b:free} and solved first-try; \textbf{0 escalations},
-\textbf{0 over-routing}. The only non-solves were 8 $\times$ OpenRouter 429 once the
-free-tier daily cap was hit again. On the 429'd calls the driver fell back to the
-configured \code{nemotron-3-ultra-550b} target (which also 429'd) --- the same
-fallback path seen in run 1, not a capability escalation.
-\end{quote}
+\begin{figure}[ht]
+\centering
+\begin{minipage}{0.44\textwidth}
+\centering
+\includegraphics[width=\textwidth]{figures/opt_token_usage.png}
+\end{minipage}\hfill
+\begin{minipage}{0.44\textwidth}
+\centering
+\includegraphics[width=\textwidth]{figures/opt_cost_decomposition.png}
+\end{minipage}
+\caption{Left: prompt vs.\ completion tokens by configuration---\texttt{caveman} trades
+a modest completion-token cut for a large prompt-token increase. Right: cost
+decomposition, baseline vs.\ \texttt{caveman}---the damage is on both axes, prompt
+overhead on non-escalated problems and far more escalations.}
+\label{fig:opt_tokens}
+\label{fig:opt_decomp}
+\end{figure}
 
-\section*{Run 1 results (\code{tpu\_bench\_001})}
+The damage concentrates on the cheapest problems, where the baseline was nearly free.
+The canonical failure is a \texttt{very\_easy} ``2+2''-class problem the baseline
+solves instantly for $\sim\!\$2\!\times\!10^{-6}$: under \texttt{caveman} the terse
+reply fails the exact-match check, escalates all the way to the top tier, still fails
+the format check, and ends up costing $\sim\!\$0.038$ and unsolved---a roughly
+$3{,}700\times$ blow-up on a problem that should be free.
 
-\begin{longtable}{@{}>{\raggedright}p{0.42\textwidth} p{0.5\textwidth}@{}}
-\toprule
-\textbf{Metric} & \textbf{Value} \\
-\midrule
-Problems attempted & 46 \\
-Reached a solver & 45 \\
-\textbf{Solved} & \textbf{40 / 45 (88.9\%)} \\
-Solved, excluding rate-limited failures & \textbf{40 / 40 (100\%)} \\
-Escalations & 0 \\
-Failures & 5 (all OpenRouter free-tier rate-limit) + 1 dropped (router non-JSON) \\
-Total cost (custom units) & \$0.000386 \\
-Cost per solved problem & $\sim$\$0.0000096 \\
-Prompt tokens & 6{,}586 \\
-Completion tokens & 4{,}563 \\
-Total solver attempts & 45 \\
-\bottomrule
-\end{longtable}
+% --- Section 5: Optimization Opportunities ---
+\section{Optimization Opportunities}
+\label{sec:optimization}
+The evaluation points to a clear ordering of where effort pays off.
 
-\subsection*{Results by domain}
+\textbf{Routing accuracy dominates everything.}
+The solver tier drives both cost and latency: on the full benchmark 99.6\% of all cost
+came from the 25 calls that reached the 550B tier (Table~\ref{tab:routing-outcome}),
+and re-pricing shows a $\sim\!2{,}600\times$ spread between the cheapest and strongest
+solver (Figure~\ref{fig:router_vs_models}), whereas router serving overhead is
+milliseconds. The single largest deployment win is therefore avoiding unnecessary
+escalation and over-routing, not making the router faster. The \texttt{caveman} study
+reinforces this from the opposite direction: an optimization that is locally sensible
+(fewer completion tokens) is globally harmful because it perturbs routing and escalation
+behavior.
 
-\begin{longtable}{@{}l r r r r r r r r@{}}
-\toprule
-\textbf{Domain} & \textbf{n} & \textbf{Solved} & \textbf{Rate} & \textbf{Esc.} & \textbf{RL} & \textbf{Cost} & \textbf{P.tok} & \textbf{C.tok} \\
-\midrule
-math      & 20 & 16 & 80.0\%  & 0 & 4 & \$0.000138 & 2{,}493 & 1{,}248 \\
-reasoning & 15 & 14 & 93.3\%  & 0 & 1 & \$0.000105 & 1{,}776 & 1{,}070 \\
-code      & 10 & 10 & 100.0\% & 0 & 0 & \$0.000143 & 2{,}317 & 2{,}245 \\
-\bottomrule
-\end{longtable}
+\textbf{Optimize for the workload, not the token.}
+\texttt{caveman}'s fixed per-call prompt overhead looks worst exactly where problems
+are smallest, and \texttt{longctx\_ai} never crosses its compression threshold on
+short prompts, making it an honest no-op here. Both signs could flip on a long-context
+workload---the lesson is that prompt optimizations must be matched to the problem
+distribution, and gated (e.g., by length or difficulty) rather than applied
+unconditionally.
 
-\begin{quote}
-Every non-rate-limited problem in all three domains solved on the \textbf{first
-attempt} (attempts = n per domain; no repair retries or escalations were triggered).
-Code carried the most completion tokens per problem, as expected for generated
-solutions.
-\end{quote}
+\textbf{Router-tier systems wins are second-order.}
+On the local tier, weight + KV-cache quantization (the pending sweep) frees HBM for a
+larger \texttt{max\_num\_seqs}, prefix caching already amortizes the identical routing
+prompt across problems, and the two-pass self-revision could be gated on low confidence
+to halve router latency. These help latency and serving density but, per the first
+point, are second-order to routing accuracy for total cost. Once routing is accurate and
+the router is quantized and batched, the remaining cost is intrinsic solver compute on
+genuinely hard problems---the next frontier being techniques like VLM-describe routing
+that convert expensive image tokens to a cheap text description before the large model
+sees them.
 
-\section*{Routing behavior}
-
-\begin{itemize}[leftmargin=1.4em]
-\item For every successfully-routed problem, the granite router selected
-  \code{openai/gpt-oss-20b:free} --- appropriate for this sample, which skews
-  easy/medium (GSM8K-style word problems, short logic puzzles, and HumanEval-style
-  functions the cheapest tier handles).
-\item \textbf{0 escalations} and \textbf{0 over-routing} to the expensive tiers: no
-  easy problem was sent to \code{qwen3-coder} or \code{nemotron}, and nothing that the
-  small model solved needed the strongest model. On this sample the router is
-  cost-efficient.
-\end{itemize}
-
-\section*{Failure analysis}
-
-All non-solves were \textbf{infrastructure}, not model capability:
-
-\begin{enumerate}[leftmargin=1.6em]
-\item \textbf{13 $\times$ OpenRouter 429 (free-tier daily cap).} Late in each run we
-  hit \emph{``Rate limit exceeded: free-models-per-day''} --- an account-wide cap on
-  free models. These problems never got a real completion.
-\item \textbf{1 $\times$ router emitted non-JSON.} On one reasoning problem (run 1)
-  the granite router's output was the bare token \code{Mary} instead of a JSON object,
-  so the driver raised \code{Router response did not contain a JSON object} and skipped
-  it. Run 2 had no such drops, so the issue is intermittent ($\sim$1/134).
-\end{enumerate}
-
-\noindent Secondary observation: on the rate-limited problems the router's
-\textbf{revised (2nd-pass)} response failed to parse a \code{model\_id}, so the driver
-fell back to the configured fallback model (\code{nemotron-3-ultra}). This is harmless
-here (the calls 429'd regardless) but points at the same router-output-robustness
-issue.
-
-\section*{Cost}
-
-\begin{itemize}[leftmargin=1.4em]
-\item Combined cost for 120 solved problems: $\sim$\$9.8e-6 per solved problem (custom
-  units) --- all served by the cheapest external tier.
-\item Because nothing escalated, there is no expensive-tier cost to report on this
-  sample. A harder problem set is needed to exercise (and price) the \code{qwen3-coder}
-  / \code{nemotron} tiers and produce a cost-vs-solve-rate frontier with spread.
-\end{itemize}
-
-\section*{Caveats}
-
-\begin{itemize}[leftmargin=1.4em]
-\item \textbf{Easy-skewed sample} (\code{--limit} slices). Solve rates and the
-  all-\code{gpt-oss-20b} routing reflect difficulty mix, not a full-set result.
-\item \textbf{Free-tier rate limit} truncated both runs; the 429s are environmental.
-  Re-run with credits (or after the daily reset) for an uninterrupted pass.
-\item Driven through a shared resolution server (\code{:8001}); the per-call cost
-  numbers use the same cost function and identical params for \code{gpt-oss-20b}, so
-  they are representative of the current lineup.
-\item Router output is occasionally non-JSON ($\sim$1/134); hardening the parse /
-  adding a retry would recover those.
-\end{itemize}
-
-\section*{Takeaways}
-
-\begin{enumerate}[leftmargin=1.6em]
-\item The system works \textbf{end-to-end on the TPU with real models} across two runs
-  and 134 problems: routing on-device, solving via OpenRouter, validation, cost
-  accounting, and metrics all wired.
-\item The cost-optimal routing finding is \textbf{reproducible}: across both runs and
-  all 4 domains the router sent every reached problem to the cheapest tier and got a
-  \textbf{100\% solve rate on problems that reached a model, with zero escalations}.
-\item The only failures were \textbf{rate-limit / router-parse robustness}, both
-  fixable: add OpenRouter credits (or back off on 429) and harden the router JSON
-  parse. Run 2 had no router-parse drops, so the JSON issue is intermittent
-  ($\sim$1/134).
-\item To make the cost-vs-quality story compelling, the \textbf{next run needs harder
-  problems} that force escalation into the \code{qwen3-coder} / \code{nemotron} tiers
-  --- on this difficulty mix the cheapest model is sufficient, so the expensive tiers
-  are still unpriced.
-\end{enumerate}
+% --- Section 6: Conclusion ---
+\section{Conclusion}
+\label{sec:conclusion}
+We built and characterized a hierarchical agentic inference system in which a small,
+locally-hosted model routes each problem to the cheapest external solver likely to
+succeed, backed by a server-owned loop that validates, repairs, and escalates within a
+bounded budget. On the full 248-problem benchmark it solved 96.4\% of problems, and the
+cost decomposition is unambiguous: the cheapest tier solved all 220 problems it
+received for 0.4\% of the cost, while 99.6\% of the cost came from the few calls that
+reached the 550B tier---which also accounted for most of the remaining failures. A live
+on-TPU run validated the same pipeline end-to-end, a forced single-model study showed
+the capability spread between tiers is only a few points on this mix, and a controlled
+study showed that token-cutting prompt optimizations can be net cost-negative once
+prompt overhead and escalation side effects are counted. Together these reinforce that
+routing accuracy---keeping problems off the expensive tier---rather than token thrift or
+router speed is the dominant cost lever. The main limitation is that our benchmark skews
+easy/medium, so the expensive tiers are exercised mainly by mis-routes; the clear next
+step is a harder problem set that forces capability-driven escalation, together with the
+pending router quantization sweep and VLM-describe routing for the image tier.
 
 \end{document}

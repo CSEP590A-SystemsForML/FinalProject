@@ -357,10 +357,89 @@ async def solve_problem(
       escalate once to the strongest model on failure. See `_solve_difficulty`.
     """
 
+    if solve_request.pin_model:
+        return await _solve_single(solve_request, run_optimizations)
+
     strategy = normalize_routing_strategy(solve_request.routing_strategy, run_optimizations)
     if strategy == "difficulty":
         return await _solve_difficulty(solve_request, run_optimizations)
     return await _solve_confidence(solve_request, run_optimizations)
+
+
+async def _solve_single(
+    solve_request: SolveRequest,
+    run_optimizations: dict | None = None,
+) -> SolveResponse:
+    """
+    Forced single-model resolution: try ONLY solve_request.model_id, never escalate.
+
+    This isolates one model's accuracy/cost on the same problems the router and the
+    other models see, so a benchmark can compare the adaptive router against each
+    individual model as a standalone solver. Grading, tool use, code repair, and the
+    cost accumulator are shared with the laddered loops so results stay comparable.
+    """
+
+    cost = CostAccumulator()
+    grounded = has_ground_truth(solve_request)
+
+    verify_mode = normalize_verify_mode(solve_request.verify)
+    runs_code_tests = verify_mode == "tests" and bool(solve_request.assert_cases)
+
+    tool_context, tool_invocations, tool_metadata = await prepare_tool_context(solve_request, run_optimizations)
+    messages, long_context_metadata = build_solver_messages(
+        solve_request, tool_context, run_optimizations, request_confidence=not grounded
+    )
+
+    model_id = solve_request.model_id
+    attempts = 0
+    final_answer = None
+    error = None
+    solved = False
+
+    for attempt_index in range(solve_request.max_attempts):
+        attempts += 1
+        call_result = query_model(model_id, messages)
+        cost.add(call_result)
+
+        if call_result.error:
+            error = call_result.error
+            break
+
+        if grounded:
+            final_answer = call_result.text
+            if validate_answer(solve_request, final_answer):
+                solved = True
+                error = None
+                break
+            if runs_code_tests and attempt_index < solve_request.max_attempts - 1:
+                exec_result = await run_candidate_code_tool(final_answer, solve_request.assert_cases)
+                tool_invocations.append(exec_result.name)
+                messages = messages + _code_repair_messages(final_answer, exec_result)
+        else:
+            final_answer, self_conf = parse_answer_confidence(call_result.text)
+            if self_conf is not None and self_conf >= ACCEPT_CONFIDENCE_THRESHOLD:
+                solved = True
+                error = None
+                break
+            error = "Solver confidence below acceptance threshold."
+            break
+
+    if not solved and error is None:
+        error = "Model attempts did not validate."
+
+    return _build_response(
+        solve_request,
+        model_id=model_id,
+        solved=solved,
+        attempts=attempts,
+        final_answer=final_answer,
+        cost=cost,
+        tool_invocations=tool_invocations,
+        tool_metadata=tool_metadata,
+        long_context_metadata=long_context_metadata,
+        escalated=False,
+        error=error,
+    )
 
 
 async def _solve_confidence(

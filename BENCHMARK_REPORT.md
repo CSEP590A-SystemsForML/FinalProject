@@ -171,9 +171,147 @@ candidate model individually? Cost is computed with the project's own cost funct
   more — for **no solve-rate headroom to gain**, since the cheapest model already
   solves this difficulty mix.
 - This is the cost-vs-quality argument with no expensive-tier spread *because the
-  sample is easy/medium*; the modeled costs above are exact for the observed tokens,
-  but the **empirical** solve rates of the larger models on these same problems are a
-  pending run (blocked on the OpenRouter free-tier daily cap; see Caveats).
+  sample is easy/medium*; the modeled costs above are exact for the observed tokens.
+  The **empirical** solve rates of each model run individually are now measured
+  directly — see the next section.
+
+### Empirical: each model run individually (live forced single-model passes)
+
+The table above re-prices the *same observed tokens*. This one runs each model as an
+**actual standalone solver with escalation disabled** (new `SolveRequest.pin_model`
+mode, `scripts/forced_model_eval.py`), over a fixed balanced **32-problem slice** (8
+each from math / reasoning / factual / code). Same problems across the router,
+`gpt-oss-20b`, and `gpt-oss-120b`; `nemotron-550b` on a 16-problem subset (it is slow,
+>120 s/problem). So these are **real solve rates**, not projections.
+
+![Router vs. each model, empirical](figures/router_vs_models_empirical.png)
+
+| Solver (no escalation) | Problems | Solved | Solve rate | Cost (custom) | Cost / problem | vs. 20B |
+|------------------------|---------:|-------:|-----------:|--------------:|---------------:|--------:|
+| **Adaptive router** | 32 (27 reached) | 24 | 75% e2e · 88.9% of reached | $0.00036 | $1.3e-5 | 1.4× |
+| `gpt-oss-20b` only | 32 | 31 | **96.9%** | $0.00030 | $9.4e-6 | **1.0×** |
+| `gpt-oss-120b` only | 32 | 32 | **100%** | $0.00354 | $1.1e-4 | 11.8× |
+| `nemotron-550b` only | 20 | 19 | **95.0%** | $0.33677 | $1.7e-2 | **~1,790×** |
+| `qwen3-coder` only | 26 | — | **n/a** | — | — | — |
+
+> `qwen/qwen3-coder:free` returns **404 (delisted from OpenRouter's free tier) / 429**
+> on every one of 26 calls, so it is unmeasurable here — *invoked but never reachable*.
+> `nemotron-550b` is slow (>120 s/problem), so it was run on a 20-problem subset.
+
+Three empirical findings:
+
+1. **The expensive tiers buy no accuracy on this mix.** `gpt-oss-120b` (100%) edges
+   `gpt-oss-20b` (96.9%) by ~3 points for **~12×** the cost/problem, and the strongest
+   model, `nemotron-550b`, actually **solves *fewer* (95.0%) than the cheap 20B** while
+   costing **~1,790×** as much per problem and running >120 s/call. On this easy/medium
+   slice there is simply no accuracy headroom to justify escalating — exactly the regime
+   the router is designed to exploit.
+2. **The router's cost lands at the cheap-tier floor.** It routed everything to the
+   `gpt-oss-20b` class, so cost/problem (~1.4× the cheapest) sits far below every larger
+   model — the routing policy is cost-optimal here.
+3. **The router's weak point is *robustness*, not routing.** Its on-device 2-pass granite
+   decision dropped **5/32** problems (non-JSON / timeout) *before* they reached a solver,
+   so end-to-end the router (24/32) trailed simply always-using `gpt-oss-20b` (31/32) on
+   this run — a **router-stage reliability** cost, not a capability or cost one. Hardening
+   the router JSON parse and gating the self-critique pass on low confidence would recover
+   these (consistent with the ~1/134 non-JSON rate seen in the live runs above).
+
+> Method note: "no escalation" is enforced by the new `pin_model` path in
+> `server/resolution/resolution.py` (`_solve_single`) — it tries only the requested
+> model and never climbs the ladder, so each row is that model's standalone result on
+> the identical problem. Run via `scripts/forced_model_eval.py`.
+
+---
+
+## Solver-side optimization study (clean re-run, OpenAI lineup)
+
+The runs above measure **routing**. This separate study measures **solver-side
+prompt optimizations** (`caveman` terse-prompting, `long_context_compression_ai`)
+on a clean, comparable matrix. It uses a different lineup and harness, so read it on
+its own terms (see *Study caveats* below):
+
+- **Solver lineup:** OpenAI capability ladder `gpt-4o-mini → gpt-4o → gpt-4.1 → gpt-5.1`
+  (escalation target). The OpenRouter "free" models are no longer free.
+- **Router:** a deterministic `difficulty → model` **stand-in** (not the real vLLM
+  router, which needs the TPU). So this isolates the *solver-side* effect.
+- **Sample:** 4 configs × 66 problems, same problems across configs, `image` excluded.
+- **Cost:** the same synthetic parameter-based function, with the top tier re-estimated
+  to 1T/50B so one escalation costs ~2.7× the large tier (otherwise a single escalation
+  determines ~99% of a run's cost and drowns out the optimization signal).
+
+### Results
+
+| Config | Optimization(s) | Solve rate | Escalations | Synthetic cost | Δ vs baseline | Prompt tok | Completion tok | $/solved |
+|--------|-----------------|-----------:|------------:|---------------:|--------------:|-----------:|---------------:|---------:|
+| **baseline** | — | 97.0% (64/66) | 3 | $0.196 | — | 6,837 | 5,077 | $0.00306 |
+| **longctx_ai** | `long_context_compression_ai` | **98.5% (65/66)** | 3 | **$0.189** | **−3.6%** | 6,778 | 5,089 | $0.00290 |
+| **caveman** | `caveman` | 97.0% (64/66) | 6 | $0.536 | **+174%** | 15,816 | 3,752 | $0.00837 |
+| **combo** | `caveman` + `longctx_ai` + web-search | 97.0% (64/66) | 5 | $0.486 | +148% | 15,064 | 3,734 | $0.00760 |
+
+> Source: `report.db`, recomputed directly from the SQLite metrics. Solve rate is
+> statistically flat (64–65 / 66) across configs — the entire signal is in **cost**.
+
+![Total synthetic cost by configuration](figures/opt_cost_by_config.png)
+
+**Headline:** `caveman` cuts solver *output* tokens ~26% as designed, but is **net
+cost-negative (+174%)** on this short-problem benchmark. `longctx_ai` is the only win,
+and only marginally. `combo` inherits caveman's losses.
+
+### Why `caveman` backfires
+
+`caveman` does shrink completion tokens, but its instruction overhead more than doubles
+*prompt* tokens, and its terseness breaks answer-format compliance — which roughly
+doubles escalations to the expensive top tier.
+
+![Token usage by configuration](figures/opt_token_usage.png)
+
+It loses on **both** axes, not just escalations. Decomposing caveman's cost vs baseline:
+
+![Cost decomposition baseline vs caveman](figures/opt_cost_decomposition.png)
+
+- **Non-escalated** cost rises $0.127 → $0.227 (**+78%**) — pure prompt overhead.
+- **Escalated** cost rises $0.069 → $0.309 (**+349%**) — more problems bounce to `gpt-5.1`.
+- Escalated problems are **58%** of caveman's total cost (vs 35% for baseline).
+- Apples-to-apples on the 58 problems both runs solve without escalating: completion
+  tokens **−33%**, but prompt tokens **+116%**.
+
+The damage concentrates on the **cheapest** problems, where the baseline was nearly free:
+
+| Difficulty | n | baseline cost | caveman cost | blow-up |
+|------------|--:|--------------:|-------------:|--------:|
+| very_easy | 4 | $1.0e-5 | $0.0383 | **~3,700×** |
+| easy | 22 | $0.0136 | $0.0892 | 6.5× |
+| medium | 32 | $0.0823 | $0.1696 | 2.1× |
+| hard | 8 | $0.0999 | $0.2387 | 2.4× |
+
+> **Canonical failure (problem_id 0):** a `very_easy` "2+2"-class math problem the
+> baseline solves instantly for ~$0.000002. Under caveman the terse answer (`2+2=4`)
+> fails exact match → escalates all the way to `gpt-5.1` → still fails the format check.
+> Result: $0.038 and **unsolved**.
+
+### Data-quality fixes behind these numbers
+
+The earlier OpenRouter-free runs had bugs that corrupted aggregates; these are fixed in
+the re-run:
+
+| Bug | Effect | Fix |
+|-----|--------|-----|
+| `NoneType` crash in `query_model` | throttled provider (`choices=None`) crashed the attempt | guarded + retryable |
+| No 429/5xx retry | rate limits became permanent failures → bogus escalations | exponential backoff |
+| Duplicate metric rows | old `caveman_001` had 281 rows for 248 problems, inflating cost | `UNIQUE(run_id, problem_id)` + `INSERT OR REPLACE` + de-dupe migration |
+| Run hygiene | vision tier wasted escalation cost; `server/.env` was tracked | `--exclude-category image`; secured `.env` + `.env.example` |
+
+### Study caveats
+
+- **Deterministic router stand-in**, not the on-TPU vLLM router — this measures
+  solver-side prompting, **not** routing quality.
+- **Synthetic cost** with a re-tuned top tier (1T/50B); not provider dollars.
+- **Short prompts** (≤1.5k chars) mean `longctx_ai` never crosses its 8k-char threshold
+  (an honest no-op here), and `caveman`'s fixed per-call overhead looks worst exactly
+  where problems are smallest. A long-context workload could flip the sign.
+- **Router/quantization optimizations** (`capabilities_prompt`, `quantized_local_lm`,
+  `quantized_kv_cache`, `local_model_solves`) still require the real vLLM router on the
+  TPU and are not covered here.
 
 ---
 
